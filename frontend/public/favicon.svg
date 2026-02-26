@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="120" y1="392" x2="392" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset="0.55" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Bold ring segment (thicker, closer to edges) -->
+  <path
+    d="M96 320
+       C140 448 304 492 416 404
+       C490 346 508 240 452 164"
+    fill="none"
+    stroke="url(#g)"
+    stroke-width="72"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Bold geometric X (thick, centered) -->
+  <path fill="url(#g)" d="
+    M152 190
+    L190 152
+    L256 218
+    L322 152
+    L360 190
+    L294 256
+    L360 322
+    L322 360
+    L256 294
+    L190 360
+    L152 322
+    L218 256
+    Z"/>
+</svg>

@@ -1,0 +1,107 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import * as convoApi from "../api/conversations";
+import MessageBubble from "./MessageBubble";
+import TypingIndicator from "./TypingIndicator";
+
+function isNearBottom(el: HTMLElement, thresholdPx = 40) {
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= thresholdPx;
+}
+
+export default function MessageList({ messages }: { messages: convoApi.MessageDTO[] }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  const [stickToBottom, setStickToBottom] = useState(true);
+
+  const stickRef = useRef(true);
+
+  const visibleCount = useMemo(
+    () => messages.reduce((acc, m) => acc + (m.role === "system" ? 0 : 1), 0),
+    [messages]
+  );
+  const prevVisibleCountRef = useRef<number>(visibleCount);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    const updateStickiness = () => {
+      const near = isNearBottom(el);
+      stickRef.current = near;
+      setStickToBottom(near);
+    };
+
+    el.addEventListener("scroll", updateStickiness, { passive: true });
+    updateStickiness(); 
+
+    return () => el.removeEventListener("scroll", updateStickiness);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!stickRef.current) {
+      prevVisibleCountRef.current = visibleCount;
+      return;
+    }
+
+    const prev = prevVisibleCountRef.current;
+    const isNewMessage = visibleCount > prev;
+
+    endRef.current?.scrollIntoView({ behavior: isNewMessage ? "smooth" : "auto" });
+    prevVisibleCountRef.current = visibleCount;
+  }, [messages, visibleCount]);
+
+  const rendered = useMemo(() => {
+    const filtered = messages.filter((m) => m.role !== "system");
+
+    const lastAssistantIndex = (() => {
+      for (let i = filtered.length - 1; i >= 0; i--) {
+        if (filtered[i].role === "assistant") return i;
+      }
+      return -1;
+    })();
+
+    if (lastAssistantIndex === -1) return filtered;
+
+    const last = filtered[lastAssistantIndex];
+
+    if (last.role === "assistant" && (!last.content || last.content.trim() === "")) {
+      const copy = [...filtered];
+      copy[lastAssistantIndex] = { ...last, content: "__TYPING__" };
+      return copy;
+    }
+
+    return filtered;
+  }, [messages]);
+
+  return (
+    <div ref={scrollerRef} className="flex-1 min-h-0 overflow-y-auto px-6 py-8">
+      <div className="mx-auto max-w-5xl space-y-4">
+        {rendered.map((m) => {
+          if (m.role === "assistant" && m.content === "__TYPING__") {
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-zinc-100">
+                  <TypingIndicator mode="typing" />
+                </div>
+              </div>
+            );
+          }
+
+          if (m.role === "assistant" && m.content === "__SEARCHING__") {
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-zinc-100">
+                  <TypingIndicator mode="searching" />
+                </div>
+              </div>
+            );
+          }
+
+          return <MessageBubble key={m.id} message={m} />;
+        })}
+        <div ref={endRef} />
+      </div>
+    </div>
+  );
+}

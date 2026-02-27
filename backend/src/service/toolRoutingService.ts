@@ -8,6 +8,11 @@ export type MoreResultsDecision =
   | { needMore: false; moreCount: 0; reason: string }
   | { needMore: true; moreCount: number; reason: string };
 
+export function extractFirstUrl(text: string): string | null {
+  const m = text.match(/\bhttps?:\/\/[^\s<>()"']+/i);
+  return m ? m[0] : null;
+}
+
 function extractJsonObject(text: string): any | null {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -54,10 +59,10 @@ Return ONLY valid JSON exactly matching this schema:
 
 Rules:
 - If use_web is true, query must be 3–12 words and NOT include quotes.
-- If use_web is false, query must be null.`,
+- If use_web is false, query must be null.`
     },
     ...recentHistory.slice(-6),
-    { role: "user", content: userText },
+    { role: "user", content: userText }
   ];
 
   const raw = await ollamaChat(
@@ -66,7 +71,7 @@ Rules:
       temperature: 0,
       top_p: 0.9,
       repeat_penalty: 1.05,
-      num_predict: 180,
+      num_predict: 180
     },
     signal
   );
@@ -84,7 +89,7 @@ Rules:
     return {
       useWeb: true,
       query: q || userText.slice(0, 120),
-      reason,
+      reason
     };
   }
 
@@ -95,7 +100,7 @@ export async function decideMoreWebResults(
   userText: string,
   firstBatch: Array<{ title: string; url: string; description: string }>,
   opts?: {
-    maxAdditional?: number; 
+    maxAdditional?: number;
     signal?: AbortSignal;
   }
 ): Promise<MoreResultsDecision> {
@@ -105,7 +110,7 @@ export async function decideMoreWebResults(
     n: i + 1,
     title: r.title,
     url: r.url,
-    description: r.description,
+    description: r.description
   }));
 
   const prompt: OllamaMessage[] = [
@@ -124,15 +129,15 @@ Rules:
 - If need_more is false: more_count must be 0.
 - If need_more is true: more_count must be an integer between 1 and ${maxAdditional}.
 - Prefer need_more=false when the answer is already clear from the results.
-- Only request more results if the current set is missing critical details, conflicting, or too thin.`,
+- Only request more results if the current set is missing critical details, conflicting, or too thin.`
     },
     {
       role: "user",
       content:
         `User question:\n${userText}\n\n` +
         `Current web results (snippets):\n${JSON.stringify(compact, null, 2)}\n\n` +
-        `Do we need more results to answer confidently?`,
-    },
+        `Do we need more results to answer confidently?`
+    }
   ];
 
   const raw = await ollamaChat(
@@ -141,7 +146,7 @@ Rules:
       temperature: 0,
       top_p: 0.9,
       repeat_penalty: 1.05,
-      num_predict: 140,
+      num_predict: 140
     },
     opts?.signal
   );

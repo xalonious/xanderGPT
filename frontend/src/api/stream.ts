@@ -1,3 +1,4 @@
+// frontend/src/api/stream.ts
 type StreamEvent =
   | { type: "token"; token: string }
   | { type: "title"; title: string }
@@ -7,6 +8,17 @@ type StreamEvent =
       tool: "web_search";
       query: string;
       results: Array<{ title: string; url: string; description: string }>;
+    }
+  | { type: "tool"; tool: "fetch_url"; url: string }
+  | {
+      type: "tool_result";
+      tool: "fetch_url";
+      url: string;
+      finalUrl: string;
+      title?: string;
+      status: number;
+      contentType?: string;
+      excerpt?: string;
     }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -55,6 +67,7 @@ async function* ndjsonStream(res: Response): AsyncGenerator<StreamEvent> {
     try {
       yield JSON.parse(tail);
     } catch {
+      // ignore
     }
   }
 }
@@ -77,7 +90,7 @@ export async function sendMessageStream(opts: {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     signal,
-    body: JSON.stringify({ content, webSearch }),
+    body: JSON.stringify({ content, webSearch })
   });
 
   if (!res.ok) {

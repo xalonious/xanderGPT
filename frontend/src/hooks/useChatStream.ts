@@ -40,7 +40,7 @@ export function useChatStream(opts: {
     onAssistantReplace,
     onAssistantDelta,
     onTitle,
-    onSources,
+    onSources
   } = opts;
 
   const [streaming, setStreaming] = useState(false);
@@ -64,17 +64,13 @@ export function useChatStream(opts: {
         content: "Prompt cancelled",
         createdAt: new Date().toISOString(),
         local: true,
-        status: "cancelled",
+        status: "cancelled"
       });
     }
   }, [conversationId, onAssistantReplace]);
 
   const send = useCallback(
-    async (
-      content: string,
-      conversationIdOverride?: string,
-      webSearch: WebSearchMode = "auto"
-    ) => {
+    async (content: string, conversationIdOverride?: string, webSearch: WebSearchMode = "auto") => {
       const activeId = conversationIdOverride ?? conversationId;
       if (!activeId) throw new Error("No conversation selected");
 
@@ -97,7 +93,7 @@ export function useChatStream(opts: {
         content,
         createdAt: new Date().toISOString(),
         local: true,
-        status: "normal",
+        status: "normal"
       };
       onUserMessage(userMsg);
 
@@ -108,7 +104,7 @@ export function useChatStream(opts: {
         content: "",
         createdAt: new Date().toISOString(),
         local: true,
-        status: "normal",
+        status: "normal"
       };
       onAssistantStart(assistantMsg);
 
@@ -122,6 +118,7 @@ export function useChatStream(opts: {
           signal: ctrl.signal,
 
           onTool: (evt) => {
+
             if (evt.type === "tool" && evt.tool === "web_search") {
               if (!hasReceivedTokenRef.current) {
                 onAssistantReplace({
@@ -131,7 +128,22 @@ export function useChatStream(opts: {
                   content: "__SEARCHING__",
                   createdAt: new Date().toISOString(),
                   local: true,
-                  status: "normal",
+                  status: "normal"
+                });
+              }
+              return;
+            }
+
+            if (evt.type === "tool" && evt.tool === "fetch_url") {
+              if (!hasReceivedTokenRef.current) {
+                onAssistantReplace({
+                  id: assistantId,
+                  conversationId: activeId,
+                  role: "assistant",
+                  content: "__SEARCHING__",
+                  createdAt: new Date().toISOString(),
+                  local: true,
+                  status: "normal"
                 });
               }
               return;
@@ -140,23 +152,12 @@ export function useChatStream(opts: {
             if (evt.type === "tool_result" && evt.tool === "web_search") {
               const sources = (evt.results ?? []) as WebSource[];
               lastSourcesRef.current = sources;
-
-              if (!hasReceivedTokenRef.current) {
-                onAssistantReplace({
-                  id: assistantId,
-                  conversationId: activeId,
-                  role: "assistant",
-                  content:
-                    sources.length > 0
-                      ? `Found ${sources.length} sources. Writing response…`
-                      : "No good sources found. Writing response…",
-                  createdAt: new Date().toISOString(),
-                  local: true,
-                  status: "normal",
-                });
-              }
-
               onSources?.(sources, activeId);
+              return;
+            }
+
+            if (evt.type === "tool_result" && evt.tool === "fetch_url") {
+              return;
             }
           },
 
@@ -168,14 +169,14 @@ export function useChatStream(opts: {
             onAssistantDelta(full);
           },
 
-          onTitle: (title) => onTitle?.(title, activeId),
+          onTitle: (title) => onTitle?.(title, activeId)
         });
       } catch (err) {
         if (ctrl.signal.aborted || isAbortError(err)) {
           onAssistantReplace({
             ...assistantMsg,
             content: "Prompt cancelled",
-            status: "cancelled",
+            status: "cancelled"
           });
           return;
         }
@@ -192,7 +193,7 @@ export function useChatStream(opts: {
       onAssistantReplace,
       onAssistantDelta,
       onTitle,
-      onSources,
+      onSources
     ]
   );
 

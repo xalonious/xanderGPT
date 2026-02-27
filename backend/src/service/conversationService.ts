@@ -321,9 +321,12 @@ export async function sendMessageStream(
 
   let toolSystemBlocks: OllamaMessage[] = [];
 
-  let fetchedUrlOk = false;
-
   const firstUrl = extractFirstUrl(trimmed);
+
+  let fetchedUrlOk = false;
+  let fetchUrlFailed = false;
+  let fetchUrlError = "";
+
   if (firstUrl) {
     onToolEvent?.({ type: "tool", tool: "fetch_url", url: firstUrl });
 
@@ -365,6 +368,8 @@ export async function sendMessageStream(
       );
     } catch (err: any) {
       fetchedUrlOk = false;
+      fetchUrlFailed = true;
+      fetchUrlError = String(err?.message ?? "unknown error");
 
       onToolEvent?.({
         type: "tool_result",
@@ -374,17 +379,24 @@ export async function sendMessageStream(
         title: undefined,
         status: 0,
         contentType: undefined,
-        excerpt: `Failed to fetch URL: ${String(err?.message ?? "unknown error")}`.slice(
-          0,
-          URL_TOOL_EXCERPT_CHARS
-        ),
+        excerpt: `Failed to fetch URL: ${fetchUrlError}`.slice(0, URL_TOOL_EXCERPT_CHARS),
+      });
+
+      toolSystemBlocks.push({
+        role: "system",
+        content:
+          "TOOL FAILURE: fetch_url could not access the user-provided link. " +
+          "You do NOT have the page content. " +
+          "You MUST tell the user you couldn't access the link (common causes: paywall, consent wall, bot protection, or blocked content). " +
+          "Ask them to paste the relevant text, or enable web search for a best-effort summary. " +
+          "Do not pretend you read the article.",
       });
     }
   }
 
-  const allowWebSearch = webSearchMode === "force" ? true : !fetchedUrlOk;
+  const allowWebSearch = firstUrl ? webSearchMode === "force" : webSearchMode !== "off";
 
-  if (allowWebSearch && webSearchMode !== "off") {
+  if (allowWebSearch) {
     const decision =
       webSearchMode === "force"
         ? { useWeb: true as const, query: trimmed, reason: "Forced by user toggle" }

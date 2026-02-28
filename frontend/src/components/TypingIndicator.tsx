@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 export default function TypingIndicator({
   mode = "typing",
 }: {
-  mode?: "typing" | "searching";
+  mode?: "typing" | "searching" | "calculating";
 }) {
   const [dots, setDots] = useState("");
 
@@ -20,13 +20,35 @@ export default function TypingIndicator({
       <div className="flex flex-col gap-2 py-1">
         <div className="flex items-center gap-2 text-sm text-zinc-300">
           <span className="animate-pulse">🌐</span>
-          <span className="tracking-wide">
-            Searching the web{dots}
-          </span>
+          <span className="tracking-wide">Searching the web{dots}</span>
         </div>
 
         <div className="relative h-1.5 w-48 overflow-hidden rounded-full bg-white/10">
           <div className="absolute inset-0 animate-[shimmer_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+        </div>
+
+        <style>
+          {`
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
+
+  if (mode === "calculating") {
+    return (
+      <div className="flex flex-col gap-2 py-1">
+        <div className="flex items-center gap-2 text-sm text-zinc-300">
+          <span className="animate-pulse">🧮</span>
+          <span className="tracking-wide">Calculating{dots}</span>
+        </div>
+
+        <div className="relative h-1.5 w-40 overflow-hidden rounded-full bg-white/10">
+          <div className="absolute inset-0 animate-[shimmer_1.2s_linear_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
         </div>
 
         <style>

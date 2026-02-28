@@ -5,6 +5,7 @@ import App from "./App";
 import "./index.css";
 import { AuthProvider } from "./auth/AuthContext";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 import { Toaster } from "sonner"; 
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

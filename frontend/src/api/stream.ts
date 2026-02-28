@@ -1,13 +1,20 @@
-// frontend/src/api/stream.ts
 type StreamEvent =
   | { type: "token"; token: string }
   | { type: "title"; title: string }
   | { type: "tool"; tool: "web_search"; query: string }
+  | { type: "tool"; tool: "calculator"; expression: string }
   | {
       type: "tool_result";
       tool: "web_search";
       query: string;
       results: Array<{ title: string; url: string; description: string }>;
+    }
+  | {
+      type: "tool_result";
+      tool: "calculator";
+      expression: string;
+      result: string;
+      value?: number;
     }
   | { type: "tool"; tool: "fetch_url"; url: string }
   | {
@@ -67,7 +74,6 @@ async function* ndjsonStream(res: Response): AsyncGenerator<StreamEvent> {
     try {
       yield JSON.parse(tail);
     } catch {
-      // ignore
     }
   }
 }

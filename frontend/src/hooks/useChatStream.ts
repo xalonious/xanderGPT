@@ -119,6 +119,21 @@ export function useChatStream(opts: {
 
           onTool: (evt) => {
 
+            if (evt.type === "tool" && evt.tool === "calculator") {
+              if (!hasReceivedTokenRef.current) {
+                onAssistantReplace({
+                  id: assistantId,
+                  conversationId: activeId,
+                  role: "assistant",
+                  content: "__CALCULATING__",
+                  createdAt: new Date().toISOString(),
+                  local: true,
+                  status: "normal"
+                });
+              }
+              return;
+            }
+
             if (evt.type === "tool" && evt.tool === "web_search") {
               if (!hasReceivedTokenRef.current) {
                 onAssistantReplace({
@@ -153,6 +168,10 @@ export function useChatStream(opts: {
               const sources = (evt.results ?? []) as WebSource[];
               lastSourcesRef.current = sources;
               onSources?.(sources, activeId);
+              return;
+            }
+
+            if (evt.type === "tool_result" && evt.tool === "calculator") {
               return;
             }
 

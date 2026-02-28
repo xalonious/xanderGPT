@@ -33,7 +33,7 @@ export default function MessageList({ messages }: { messages: convoApi.MessageDT
     };
 
     el.addEventListener("scroll", updateStickiness, { passive: true });
-    updateStickiness(); 
+    updateStickiness();
 
     return () => el.removeEventListener("scroll", updateStickiness);
   }, []);
@@ -93,6 +93,16 @@ export default function MessageList({ messages }: { messages: convoApi.MessageDT
               <div key={m.id} className="flex justify-start">
                 <div className="max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-zinc-100">
                   <TypingIndicator mode="searching" />
+                </div>
+              </div>
+            );
+          }
+
+          if (m.role === "assistant" && m.content === "__CALCULATING__") {
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-zinc-100">
+                  <TypingIndicator mode="calculating" />
                 </div>
               </div>
             );

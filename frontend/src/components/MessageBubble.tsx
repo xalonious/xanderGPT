@@ -3,6 +3,8 @@ import React, { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 type WebSource = {
   title: string;
@@ -26,6 +28,16 @@ function getDomain(url: string): string {
   } catch {
     return url;
   }
+}
+
+function normalizeLatexDelimiters(input: string) {
+  let s = input;
+
+  s = s.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
+
+  s = s.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$\n${inner}\n$$`);
+
+  return s;
 }
 
 function CodeBlock({ children }: { children: React.ReactNode }) {
@@ -78,10 +90,12 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
 }
 
 function Markdown({ children }: { children: string }) {
+  const normalized = useMemo(() => normalizeLatexDelimiters(children), [children]);
+
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex, rehypeHighlight]}
       components={{
         a: ({ ...props }) => (
           <a
@@ -111,9 +125,18 @@ function Markdown({ children }: { children: string }) {
           <th {...props} className="border border-white/10 bg-white/5 px-3 py-2 text-left" />
         ),
         td: ({ ...props }) => <td {...props} className="border border-white/10 px-3 py-2" />,
-        code: ({ className, children, ...props }) => {
-          const isBlock = !!className;
 
+        code: ({ className, children, ...props }) => {
+          const cls = className ?? "";
+          if (cls.includes("language-math") || cls.includes("math-inline") || cls.includes("math-display")) {
+            return (
+              <code {...props} className={className}>
+                {children}
+              </code>
+            );
+          }
+
+          const isBlock = !!className;
           if (!isBlock) {
             return (
               <code
@@ -134,7 +157,7 @@ function Markdown({ children }: { children: string }) {
         pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
       }}
     >
-      {children}
+      {normalized}
     </ReactMarkdown>
   );
 }
@@ -176,9 +199,7 @@ function SourcesPanel({ sources }: { sources: WebSource[] }) {
 
                 <div className="mt-0.5 text-zinc-400">{getDomain(s.url)}</div>
 
-                {s.description ? (
-                  <div className="mt-1 text-zinc-300/90">{s.description}</div>
-                ) : null}
+                {s.description ? <div className="mt-1 text-zinc-300/90">{s.description}</div> : null}
               </li>
             ))}
           </ol>
@@ -217,9 +238,7 @@ export default function MessageBubble({ message }: { message: MessageWithSources
           <div className="text-sm leading-relaxed text-zinc-100 w-full">
             <Markdown>{message.content || "…"}</Markdown>
 
-            {message.role === "assistant" && sources.length > 0 ? (
-              <SourcesPanel sources={sources} />
-            ) : null}
+            {message.role === "assistant" && sources.length > 0 ? <SourcesPanel sources={sources} /> : null}
           </div>
         </div>
       </div>

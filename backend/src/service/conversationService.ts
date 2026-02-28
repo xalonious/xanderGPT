@@ -2,16 +2,22 @@ import { prisma } from "../data";
 import ServiceError from "../core/ServiceError";
 import { ollamaChat, ollamaChatStream, type OllamaMessage } from "./ollamaService";
 import { braveWebSearch, formatWebResultsForPrompt } from "./braveSearchService";
-import { decideWebSearch, decideMoreWebResults, extractFirstUrl } from "./toolRoutingService";
+import {
+  decideWebSearch,
+  decideMoreWebResults,
+  decideCalculator,
+  extractFirstUrl,
+} from "./toolRoutingService";
 import { fetchAndExtractUrl } from "./urlFetchService";
+import { evaluateExpression } from "./calculatorService";
 
 const HISTORY_MESSAGE_LIMIT = 30;
 const WEB_SEARCH_INITIAL = 5;
 const WEB_SEARCH_MAX_TOTAL = 10;
 const WEB_SEARCH_MAX_ROUNDS = 3;
 
-const URL_TOOL_MAX_CHARS = 18_000; 
-const URL_TOOL_EXCERPT_CHARS = 280; 
+const URL_TOOL_MAX_CHARS = 18_000;
+const URL_TOOL_EXCERPT_CHARS = 280;
 
 type WebSearchMode = "auto" | "force" | "off";
 
@@ -28,10 +34,26 @@ type ToolEvent =
       status: number;
       contentType?: string;
       excerpt?: string;
+    }
+  | { type: "tool"; tool: "calculator"; expression: string }
+  | {
+      type: "tool_result";
+      tool: "calculator";
+      expression: string;
+      result: string;
+      value?: number;
     };
 
 const BASE_SYSTEM_FALLBACK =
-  "You are XanderGPT, a concise, friendly AI assistant. Answer the user directly in a natural conversational tone. Keep responses reasonably short unless the user asks for more detail. If asked your name, respond exactly: XanderGPT.";
+  "You are XanderGPT, a concise, friendly AI assistant. Answer the user directly in a natural conversational tone. Keep responses reasonably short unless the user asks for more detail. If asked your name, respond exactly: XanderGPT.\n\n" +
+  "When writing mathematical expressions:\n" +
+  "- Use LaTeX formatting.\n" +
+  "- Wrap inline math in $...$\n" +
+  "- Wrap block equations in $$...$$\n" +
+  "- Do NOT use \\\\( \\\\) or \\\\[ \\\\]\n" +
+  "- Use \\\\frac{}{} for fractions.\n" +
+  "- Use \\\\sqrt{} for roots.\n" +
+  "When the user asks to compute/evaluate an expression, compute it immediately—do not ask for confirmation.\n";
 
 function assertNonEmpty(content: string) {
   const trimmed = content.trim();
@@ -192,6 +214,15 @@ export async function createConversation(userId: string, title?: string, systemP
           role: "system",
           content: `
 You are XanderGPT, a concise, friendly AI assistant. Answer the user directly in a natural conversational tone. Keep responses reasonably short unless the user asks for more detail. If asked your name, respond exactly: XanderGPT.
+
+When writing mathematical expressions:
+- Use LaTeX formatting.
+- Wrap inline math in $...$
+- Wrap block equations in $$...$$
+- Do NOT use \\( \\) or \\[ \\]
+- Use \\frac{}{} for fractions.
+- Use \\sqrt{} for roots.
+When the user asks to compute/evaluate an expression, compute it immediately—do not ask for confirmation.
           `.trim(),
         },
       },
@@ -390,6 +421,55 @@ export async function sendMessageStream(
           "You MUST tell the user you couldn't access the link (common causes: paywall, consent wall, bot protection, or blocked content). " +
           "Ask them to paste the relevant text, or enable web search for a best-effort summary. " +
           "Do not pretend you read the article.",
+      });
+    }
+  }
+
+  const calcDecision = await decideCalculator(history, trimmed, signal);
+  if (calcDecision.useCalc) {
+    const expression = calcDecision.expression;
+    onToolEvent?.({ type: "tool", tool: "calculator", expression });
+
+    try {
+      const value = evaluateExpression(expression);
+      const result = String(value);
+
+      onToolEvent?.({
+        type: "tool_result",
+        tool: "calculator",
+        expression,
+        result,
+        value,
+      });
+
+      toolSystemBlocks.push({
+        role: "system",
+        content:
+          "TOOL RESULT (calculator):\n" +
+          `expression: ${expression}\n` +
+          `result: ${result}\n\n` +
+          "Use this calculator result as the final numeric answer.\n" +
+          "DO NOT ask the user for permission to compute.\n" +
+          "DO NOT ask follow-up questions unless the expression is ambiguous.\n" +
+          "If the user asked to compute/evaluate, give the result immediately.\n" +
+          "Prefer replying with just the final value (and optionally one short line of working) unless the user asked for steps.\n",
+      });
+    } catch (err: any) {
+      const msg = String(err?.message ?? "calculator error");
+      onToolEvent?.({
+        type: "tool_result",
+        tool: "calculator",
+        expression,
+        result: `Error: ${msg}`,
+      });
+
+      toolSystemBlocks.push({
+        role: "system",
+        content:
+          "TOOL FAILURE (calculator): The expression could not be evaluated safely.\n" +
+          `expression: ${expression}\n` +
+          `error: ${msg}\n\n` +
+          "Ask the user to rephrase the expression.",
       });
     }
   }

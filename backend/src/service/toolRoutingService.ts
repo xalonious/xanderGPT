@@ -8,6 +8,10 @@ export type MoreResultsDecision =
   | { needMore: false; moreCount: 0; reason: string }
   | { needMore: true; moreCount: number; reason: string };
 
+export type CalculatorDecision =
+  | { useCalc: false; expression: null; reason: string }
+  | { useCalc: true; expression: string; reason: string };
+
 export function extractFirstUrl(text: string): string | null {
   const m = text.match(/\bhttps?:\/\/[^\s<>()"']+/i);
   return m ? m[0] : null;
@@ -165,4 +169,66 @@ Rules:
   }
 
   return { needMore: false, moreCount: 0, reason };
+}
+
+export async function decideCalculator(
+  recentHistory: OllamaMessage[],
+  userText: string,
+  signal?: AbortSignal
+): Promise<CalculatorDecision> {
+  const prompt: OllamaMessage[] = [
+    {
+      role: "system",
+      content: `You are a routing component that decides if a calculator tool should be used.
+
+Use the calculator when:
+- The user asks for a numeric result, arithmetic, algebraic evaluation, or a precise computation.
+- The user asks to "calculate/compute/evaluate" something.
+
+Do NOT use the calculator when:
+- The user asks for general explanations, proofs, or symbolic reasoning without a final numeric evaluation.
+- The question is primarily about facts, news, policies, or requires web search.
+
+Return ONLY valid JSON exactly matching this schema:
+{
+  "use_calc": true|false,
+  "expression": string|null,
+  "reason": string
+}
+
+Rules:
+- If use_calc is true, expression MUST be a single-line math expression the calculator can evaluate.
+- The expression should NOT include equals signs, variable assignments, or words other than function names.
+- If use_calc is false, expression must be null.`
+    },
+    ...recentHistory.slice(-6),
+    { role: "user", content: userText }
+  ];
+
+  const raw = await ollamaChat(
+    prompt,
+    {
+      temperature: 0,
+      top_p: 0.9,
+      repeat_penalty: 1.05,
+      num_predict: 140
+    },
+    signal
+  );
+
+  const parsed = extractJsonObject(raw);
+
+  if (!parsed || typeof parsed.use_calc !== "boolean") {
+    return { useCalc: false, expression: null, reason: "Calculator router JSON parse failed" };
+  }
+
+  const reason = String(parsed.reason ?? "").trim() || "No reason provided";
+
+  if (parsed.use_calc) {
+    const expression = String(parsed.expression ?? "").trim();
+    if (!expression) return { useCalc: false, expression: null, reason };
+    return { useCalc: true, expression, reason };
+  }
+
+  return { useCalc: false, expression: null, reason };
 }

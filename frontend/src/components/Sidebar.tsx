@@ -36,7 +36,7 @@ function IconPencil() {
 export default function Sidebar() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { conversations, loading, create, remove, rename } = useConversations();
+  const { conversations, loading, remove, rename } = useConversations();
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -46,9 +46,8 @@ export default function Sidebar() {
     return id;
   }, [id]);
 
-  const onNewChat = async () => {
-    const convo = await create("New chat");
-    navigate(`/c/${convo.id}`);
+  const onNewChat = () => {
+    navigate("/c/new");
   };
 
   const startRename = (conversationId: string, currentTitle: string | null) => {
@@ -73,8 +72,7 @@ export default function Sidebar() {
       return;
     }
 
-    const currentRaw =
-      conversations.find((c) => c.id === renamingId)?.title ?? "";
+    const currentRaw = conversations.find((c) => c.id === renamingId)?.title ?? "";
     const current = normalizeTitle(currentRaw);
 
     if (next === current) {
@@ -109,9 +107,7 @@ export default function Sidebar() {
       <div className="flex-1 overflow-y-auto p-2">
         <div className="px-2 py-2 text-xs font-medium text-zinc-500">Chats</div>
 
-        {loading && (
-          <div className="px-3 py-2 text-sm text-zinc-500">Loading…</div>
-        )}
+        {loading && <div className="px-3 py-2 text-sm text-zinc-500">Loading…</div>}
 
         {!loading && (
           <div className="space-y-1">

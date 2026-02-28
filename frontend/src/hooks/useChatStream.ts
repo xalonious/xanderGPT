@@ -40,7 +40,7 @@ export function useChatStream(opts: {
     onAssistantReplace,
     onAssistantDelta,
     onTitle,
-    onSources
+    onSources,
   } = opts;
 
   const [streaming, setStreaming] = useState(false);
@@ -64,7 +64,7 @@ export function useChatStream(opts: {
         content: "Prompt cancelled",
         createdAt: new Date().toISOString(),
         local: true,
-        status: "cancelled"
+        status: "cancelled",
       });
     }
   }, [conversationId, onAssistantReplace]);
@@ -93,7 +93,7 @@ export function useChatStream(opts: {
         content,
         createdAt: new Date().toISOString(),
         local: true,
-        status: "normal"
+        status: "normal",
       };
       onUserMessage(userMsg);
 
@@ -104,7 +104,7 @@ export function useChatStream(opts: {
         content: "",
         createdAt: new Date().toISOString(),
         local: true,
-        status: "normal"
+        status: "normal",
       };
       onAssistantStart(assistantMsg);
 
@@ -118,7 +118,6 @@ export function useChatStream(opts: {
           signal: ctrl.signal,
 
           onTool: (evt) => {
-
             if (evt.type === "tool" && evt.tool === "calculator") {
               if (!hasReceivedTokenRef.current) {
                 onAssistantReplace({
@@ -128,7 +127,7 @@ export function useChatStream(opts: {
                   content: "__CALCULATING__",
                   createdAt: new Date().toISOString(),
                   local: true,
-                  status: "normal"
+                  status: "normal",
                 });
               }
               return;
@@ -143,7 +142,7 @@ export function useChatStream(opts: {
                   content: "__SEARCHING__",
                   createdAt: new Date().toISOString(),
                   local: true,
-                  status: "normal"
+                  status: "normal",
                 });
               }
               return;
@@ -155,10 +154,10 @@ export function useChatStream(opts: {
                   id: assistantId,
                   conversationId: activeId,
                   role: "assistant",
-                  content: "__SEARCHING__",
+                  content: "__FETCHING_URL__",
                   createdAt: new Date().toISOString(),
                   local: true,
-                  status: "normal"
+                  status: "normal",
                 });
               }
               return;
@@ -171,13 +170,8 @@ export function useChatStream(opts: {
               return;
             }
 
-            if (evt.type === "tool_result" && evt.tool === "calculator") {
-              return;
-            }
-
-            if (evt.type === "tool_result" && evt.tool === "fetch_url") {
-              return;
-            }
+            if (evt.type === "tool_result" && evt.tool === "calculator") return;
+            if (evt.type === "tool_result" && evt.tool === "fetch_url") return;
           },
 
           onToken: (t) => {
@@ -188,14 +182,14 @@ export function useChatStream(opts: {
             onAssistantDelta(full);
           },
 
-          onTitle: (title) => onTitle?.(title, activeId)
+          onTitle: (title) => onTitle?.(title, activeId),
         });
       } catch (err) {
         if (ctrl.signal.aborted || isAbortError(err)) {
           onAssistantReplace({
             ...assistantMsg,
             content: "Prompt cancelled",
-            status: "cancelled"
+            status: "cancelled",
           });
           return;
         }
@@ -212,7 +206,7 @@ export function useChatStream(opts: {
       onAssistantReplace,
       onAssistantDelta,
       onTitle,
-      onSources
+      onSources,
     ]
   );
 

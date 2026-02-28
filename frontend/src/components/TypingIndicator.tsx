@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 export default function TypingIndicator({
   mode = "typing",
 }: {
-  mode?: "typing" | "searching" | "calculating";
+  mode?: "typing" | "searching" | "calculating" | "fetching";
 }) {
   const [dots, setDots] = useState("");
 
@@ -25,6 +25,30 @@ export default function TypingIndicator({
 
         <div className="relative h-1.5 w-48 overflow-hidden rounded-full bg-white/10">
           <div className="absolute inset-0 animate-[shimmer_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+        </div>
+
+        <style>
+          {`
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
+
+  if (mode === "fetching") {
+    return (
+      <div className="flex flex-col gap-2 py-1">
+        <div className="flex items-center gap-2 text-sm text-zinc-300">
+          <span className="animate-pulse">🔗</span>
+          <span className="tracking-wide">Fetching URL{dots}</span>
+        </div>
+
+        <div className="relative h-1.5 w-44 overflow-hidden rounded-full bg-white/10">
+          <div className="absolute inset-0 animate-[shimmer_1.4s_linear_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
         </div>
 
         <style>

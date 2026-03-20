@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
@@ -25,10 +25,42 @@ function upsertById(prev: AnyMessage[], msg: AnyMessage) {
   return copy;
 }
 
+function updateLastAssistantContent(prev: AnyMessage[], full: string) {
+  const copy = [...prev];
+  const idx = copy.map((x) => x.role).lastIndexOf("assistant");
+  if (idx === -1) return prev;
+  copy[idx] = { ...copy[idx], content: full };
+  return copy;
+}
+
+function TemporaryChatIcon({ enabled }: { enabled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="M7 18.5H5.5A1.5 1.5 0 0 1 4 17V6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V17a1.5 1.5 0 0 1-1.5 1.5H10l-3 2v-2Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {enabled && (
+        <path
+          d="M9 11.8l2.1 2.1L15.8 9.2"
+          stroke="currentColor"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+    </svg>
+  );
+}
+
 const DRAFT_PREFS_KEY = "xandergpt_draft_system_prompt";
 
 export default function ChatPage() {
   const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const convoId = id && id !== "new" ? id : null;
 
@@ -36,6 +68,9 @@ export default function ChatPage() {
   const { messages, setMessages, loading } = useMessages(convoId);
 
   const [error, setError] = useState<string | null>(null);
+  const [temporaryChat, setTemporaryChat] = useState(false);
+  const [tempMessages, setTempMessages] = useState<AnyMessage[]>([]);
+  const [tempSystemPrompt, setTempSystemPrompt] = useState("");
 
   const [draftSystemPrompt, setDraftSystemPrompt] = useState<string>(() => {
     try {
@@ -53,18 +88,20 @@ export default function ChatPage() {
   useEffect(() => {
     if (!convoId) return;
     if (!conversationsLoadedOnceRef.current) return;
+    if (temporaryChat) return;
 
     const exists = conversations.some((c) => c.id === convoId);
     if (!exists) {
       setMessages([]);
       navigate("/c/new", { replace: true });
     }
-  }, [convoId, conversations, navigate, setMessages]);
+  }, [convoId, conversations, navigate, setMessages, temporaryChat]);
 
   const currentTitle = useMemo(() => {
+    if (temporaryChat) return "Temporary chat";
     if (!convoId) return "New chat";
     return conversations.find((c) => c.id === convoId)?.title ?? "Chat";
-  }, [conversations, convoId]);
+  }, [temporaryChat, conversations, convoId]);
 
   const currentSystemPrompt = useMemo(() => {
     if (!convoId) return null;
@@ -74,7 +111,11 @@ export default function ChatPage() {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefsDraft, setPrefsDraft] = useState("");
 
-  const effectivePrefsText = convoId ? currentSystemPrompt ?? "" : draftSystemPrompt;
+  const effectivePrefsText = temporaryChat
+    ? tempSystemPrompt
+    : convoId
+      ? currentSystemPrompt ?? ""
+      : draftSystemPrompt;
 
   useEffect(() => {
     if (!prefsOpen) return;
@@ -82,7 +123,10 @@ export default function ChatPage() {
   }, [prefsOpen, effectivePrefsText]);
 
   const savePrefs = async () => {
-    if (convoId) {
+    if (temporaryChat) {
+      setTempSystemPrompt(prefsDraft);
+      toast.success("Preferences saved");
+    } else if (convoId) {
       await setSystemPrompt(convoId, prefsDraft);
     } else {
       setDraftSystemPrompt(prefsDraft);
@@ -92,6 +136,7 @@ export default function ChatPage() {
       }
       toast.success("Preferences saved");
     }
+
     setPrefsOpen(false);
   };
 
@@ -101,29 +146,56 @@ export default function ChatPage() {
 
   const streamingAssistantIdRef = useRef<string | null>(null);
 
-  const { send, stop, streaming } = useChatStream({
+  const appendActiveMessage = useCallback(
+    (m: AnyMessage) => {
+      if (temporaryChat) {
+        setTempMessages((prev) => [...prev, m]);
+      } else {
+        setMessages((prev) => [...prev, m]);
+      }
+    },
+    [temporaryChat, setMessages]
+  );
+
+  const replaceActiveMessage = useCallback(
+    (m: AnyMessage) => {
+      if (temporaryChat) {
+        setTempMessages((prev) => upsertById(prev, m));
+      } else {
+        setMessages((prev) => upsertById(prev, m));
+      }
+    },
+    [temporaryChat, setMessages]
+  );
+
+  const updateActiveAssistant = useCallback(
+    (full: string) => {
+      if (temporaryChat) {
+        setTempMessages((prev) => updateLastAssistantContent(prev, full));
+      } else {
+        setMessages((prev) => updateLastAssistantContent(prev, full));
+      }
+    },
+    [temporaryChat, setMessages]
+  );
+
+  const { send, sendTemporary, stop, streaming } = useChatStream({
     conversationId: convoId,
 
-    onUserMessage: (m) => setMessages((prev) => [...prev, m]),
+    onUserMessage: (m) => appendActiveMessage(m),
 
     onAssistantStart: (m) => {
       streamingAssistantIdRef.current = m.id;
-      setMessages((prev) => [...prev, m]);
+      appendActiveMessage(m);
     },
 
     onAssistantReplace: (m) => {
       streamingAssistantIdRef.current = m.id;
-      setMessages((prev) => upsertById(prev, m));
+      replaceActiveMessage(m);
     },
 
     onAssistantDelta: (full) => {
-      setMessages((prev) => {
-        const copy = [...prev];
-        const idx = copy.map((x) => x.role).lastIndexOf("assistant");
-        if (idx === -1) return prev;
-        copy[idx] = { ...copy[idx], content: full };
-        return copy;
-      });
+      updateActiveAssistant(full);
     },
 
     onTitle: (title, cid) => {
@@ -134,23 +206,103 @@ export default function ChatPage() {
       const assistantId = streamingAssistantIdRef.current;
       if (!assistantId) return;
 
-      setMessages((prev) =>
-        upsertById(prev, {
-          id: assistantId,
-          sources,
-        })
-      );
+      if (temporaryChat) {
+        setTempMessages((prev) =>
+          upsertById(prev, {
+            id: assistantId,
+            sources,
+          })
+        );
+      } else {
+        setMessages((prev) =>
+          upsertById(prev, {
+            id: assistantId,
+            sources,
+          })
+        );
+      }
     },
   });
 
   useEffect(() => {
     setError(null);
-  }, [convoId]);
+  }, [convoId, temporaryChat]);
+
+  const stopRef = useRef(stop);
+  useEffect(() => {
+    stopRef.current = stop;
+  }, [stop]);
+
+  const setMessagesRef = useRef(setMessages);
+  useEffect(() => {
+    setMessagesRef.current = setMessages;
+  }, [setMessages]);
+
+  const handledNewChatNonceRef = useRef<number | null>(null);
+  const newChatNonce = (location.state as { newChatNonce?: number } | null)?.newChatNonce ?? null;
+
+  useEffect(() => {
+    if (newChatNonce == null) return;
+    if (handledNewChatNonceRef.current === newChatNonce) return;
+
+    handledNewChatNonceRef.current = newChatNonce;
+
+    stopRef.current();
+    setError(null);
+    setPrefsOpen(false);
+    setPrefsDraft("");
+    streamingAssistantIdRef.current = null;
+    setMessagesRef.current([]);
+    setTempMessages([]);
+    setTempSystemPrompt("");
+    setTemporaryChat(false);
+  }, [newChatNonce]);
+
+  const tempConversationStarted = temporaryChat && tempMessages.length > 0;
+  const temporaryToggleLocked = tempConversationStarted || streaming;
+
+  const toggleTemporaryChat = () => {
+    if (temporaryToggleLocked) {
+      if (tempConversationStarted) {
+        toast.error("This temporary chat has already started. Start a new chat to leave temporary mode.");
+      }
+      return;
+    }
+
+    stop();
+    setError(null);
+    setPrefsOpen(false);
+    setPrefsDraft("");
+    streamingAssistantIdRef.current = null;
+
+    const next = !temporaryChat;
+    setTemporaryChat(next);
+    setTempMessages([]);
+
+    if (next) {
+      setTempSystemPrompt("");
+      navigate("/c/new", { replace: true });
+    } else {
+      setTempSystemPrompt("");
+    }
+  };
 
   const onSend = async (text: string, webSearch: WebSearchMode) => {
     setError(null);
 
     try {
+      if (temporaryChat) {
+        const history = tempMessages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: String(m.content ?? ""),
+          }));
+
+        await sendTemporary(text, history, tempSystemPrompt, webSearch);
+        return;
+      }
+
       let actualId = convoId;
 
       if (actualId && conversationsLoadedOnceRef.current) {
@@ -177,21 +329,54 @@ export default function ChatPage() {
     }
   };
 
-  const showHero = !convoId && messages.length === 0;
+  const visibleMessages = temporaryChat ? tempMessages : messages;
+  const showHero = visibleMessages.length === 0;
 
   return (
     <div className="h-full min-h-0 flex flex-col">
       <div className="px-6 py-3 border-b border-zinc-800 text-sm text-zinc-300 shrink-0 flex items-center justify-between gap-3">
-        <div className="truncate">{currentTitle}</div>
+        <div className="min-w-0">
+          <div className="truncate">{currentTitle}</div>
+          {temporaryChat && (
+            <div className="mt-1 text-[11px] text-zinc-500">
+              This chat won&apos;t be saved in your history.
+            </div>
+          )}
+        </div>
 
-        <button
-          type="button"
-          onClick={() => setPrefsOpen(true)}
-          className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-900"
-          title="Conversation preferences"
-        >
-          Preferences
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleTemporaryChat}
+            aria-pressed={temporaryChat}
+            disabled={temporaryToggleLocked}
+            title={
+              tempConversationStarted
+                ? "Temporary chat is locked for this conversation. Start a new chat to leave temporary mode."
+                : temporaryChat
+                  ? "Temporary chat is on. This chat won't be saved."
+                  : "Turn on temporary chat. Messages won't be saved."
+            }
+            className={[
+              "inline-flex h-9 w-9 items-center justify-center rounded-lg border transition",
+              temporaryChat
+                ? "border-zinc-500 bg-zinc-800 text-zinc-100"
+                : "border-zinc-700 text-zinc-200 hover:bg-zinc-900",
+              temporaryToggleLocked ? "cursor-not-allowed opacity-60" : "",
+            ].join(" ")}
+          >
+            <TemporaryChatIcon enabled={temporaryChat} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPrefsOpen(true)}
+            className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-900"
+            title="Conversation preferences"
+          >
+            Preferences
+          </button>
+        </div>
       </div>
 
       {prefsOpen && (
@@ -258,12 +443,18 @@ export default function ChatPage() {
               alt="XanderGPT"
               className="mx-auto mb-4 h-24 w-24 sm:h-28 sm:w-28"
             />
-            <div className="text-3xl font-semibold">XanderGPT</div>
-            <p className="mt-2 text-zinc-400">Start typing below to begin a new chat.</p>
+            <div className="text-3xl font-semibold">
+              {temporaryChat ? "Temporary chat" : "XanderGPT"}
+            </div>
+            <p className="mt-2 text-zinc-400">
+              {temporaryChat
+                ? "Messages in this chat are not saved to your history."
+                : "Start typing below to begin a new chat."}
+            </p>
           </div>
         </div>
       ) : (
-        <MessageList messages={loading ? [] : messages} />
+        <MessageList messages={loading && !temporaryChat ? [] : visibleMessages} />
       )}
 
       <div className="shrink-0">

@@ -17,7 +17,8 @@ Built with React, Node.js, Express, Prisma, and MySQL.
 - Automatic calculator tool (LLM decides when to compute expressions)  
 - Automatic Markdown rendering (code blocks, tables, links, lists, etc.)  
 - LaTeX math rendering with KaTeX  
-- Smart tool routing (automatically decides when to search, fetch, or calculate)  
+- Smart tool routing (automatically decides when to search, fetch, or calculate)
+- Temporary chat mode
 - Fully self-hosted AI using Ollama  
 
 ## Tech Stack

@@ -6,6 +6,7 @@ import {
   createConversationSchema,
   updateConversationSchema,
   sendMessageSchema,
+  sendTempMessageSchema,
 } from "../validation/conversation";
 
 const router = Router();
@@ -34,6 +35,80 @@ router.post(
       req.body.systemPrompt
     );
     res.status(201).json({ conversation });
+  })
+);
+
+router.post(
+  "/temp/stream",
+  validateRequest(sendTempMessageSchema),
+  asyncHandler(async (req, res) => {
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    const ac = new AbortController();
+    let clientGone = false;
+
+    const markGoneAndAbort = () => {
+      if (clientGone) return;
+      clientGone = true;
+      try {
+        ac.abort();
+      } catch {
+      }
+    };
+
+    req.on("aborted", markGoneAndAbort);
+    req.on("close", markGoneAndAbort);
+    res.on("close", markGoneAndAbort);
+
+    const safeWriteLine = (obj: unknown) => {
+      if (clientGone || res.writableEnded) return;
+      try {
+        res.write(JSON.stringify(obj) + "\n");
+      } catch {
+        markGoneAndAbort();
+      }
+    };
+
+    const webSearchMode = (req.body.webSearch ?? "auto") as "auto" | "force" | "off";
+
+    try {
+      const result = await convoService.sendTemporaryMessageStream(
+        req.body.content,
+        req.body.history ?? [],
+        req.body.systemPrompt ?? "",
+        {
+          onToken: (token) => safeWriteLine({ type: "token", token }),
+          webSearchMode,
+          onToolEvent: (evt) => safeWriteLine(evt),
+          signal: ac.signal,
+        }
+      );
+
+      if (clientGone || result.aborted) {
+        try {
+          res.end();
+        } catch {
+        }
+        return;
+      }
+
+      safeWriteLine({ type: "done" });
+      res.end();
+    } catch (err: any) {
+      if (clientGone || ac.signal.aborted || isAbortError(err)) {
+        try {
+          res.end();
+        } catch {
+        }
+        return;
+      }
+
+      safeWriteLine({ type: "error", message: err?.message ?? "Stream failed" });
+      res.end();
+      return;
+    }
   })
 );
 

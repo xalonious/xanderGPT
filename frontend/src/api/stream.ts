@@ -96,7 +96,7 @@ export async function sendMessageStream(opts: {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     signal,
-    body: JSON.stringify({ content, webSearch })
+    body: JSON.stringify({ content, webSearch }),
   });
 
   if (!res.ok) {
@@ -109,6 +109,57 @@ export async function sendMessageStream(opts: {
       onToken(evt.token);
     } else if (evt.type === "title") {
       onTitle?.(evt.title);
+    } else if (evt.type === "tool" || evt.type === "tool_result") {
+      onTool?.(evt);
+    } else if (evt.type === "error") {
+      throw new Error(evt.message || "Stream error");
+    } else if (evt.type === "done") {
+      return;
+    }
+  }
+}
+
+export async function sendTemporaryMessageStream(opts: {
+  content: string;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
+  systemPrompt?: string;
+  webSearch?: "auto" | "force" | "off";
+  signal?: AbortSignal;
+
+  onToken: (token: string) => void;
+  onTool?: (evt: Extract<StreamEvent, { type: "tool" | "tool_result" }>) => void;
+}) {
+  const {
+    content,
+    history,
+    systemPrompt = "",
+    webSearch = "auto",
+    signal,
+    onToken,
+    onTool,
+  } = opts;
+
+  const res = await fetch(`${getApiUrl()}/conversations/temp/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    signal,
+    body: JSON.stringify({
+      content,
+      history,
+      systemPrompt,
+      webSearch,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+
+  for await (const evt of ndjsonStream(res)) {
+    if (evt.type === "token") {
+      onToken(evt.token);
     } else if (evt.type === "tool" || evt.type === "tool_result") {
       onTool?.(evt);
     } else if (evt.type === "error") {

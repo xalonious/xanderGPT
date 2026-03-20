@@ -20,3 +20,20 @@ export const sendMessageSchema = {
     webSearch: Joi.string().valid("auto", "force", "off").optional().default("auto"),
   }),
 };
+
+export const sendTempMessageSchema = {
+  body: Joi.object({
+    content: Joi.string().min(1).max(20000).required(),
+    systemPrompt: Joi.string().allow("").max(4000).optional(),
+    webSearch: Joi.string().valid("auto", "force", "off").optional().default("auto"),
+    history: Joi.array()
+      .items(
+        Joi.object({
+          role: Joi.string().valid("user", "assistant").required(),
+          content: Joi.string().min(1).max(20000).required(),
+        })
+      )
+      .max(30)
+      .default([]),
+  }),
+};

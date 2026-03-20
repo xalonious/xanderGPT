@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { sendMessageStream } from "../api/stream";
+import { sendMessageStream, sendTemporaryMessageStream } from "../api/stream";
 import * as convoApi from "../api/conversations";
 
 type LocalStatus = "normal" | "cancelled";
@@ -16,6 +16,8 @@ type WebSource = {
   url: string;
   description: string;
 };
+
+const TEMP_CONVERSATION_ID = "__temp__";
 
 function isAbortError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
@@ -59,7 +61,7 @@ export function useChatStream(opts: {
     if (assistantId) {
       onAssistantReplace({
         id: assistantId,
-        conversationId: conversationId ?? "",
+        conversationId: conversationId ?? TEMP_CONVERSATION_ID,
         role: "assistant",
         content: "Prompt cancelled",
         createdAt: new Date().toISOString(),
@@ -210,5 +212,141 @@ export function useChatStream(opts: {
     ]
   );
 
-  return { send, stop, streaming };
+  const sendTemporary = useCallback(
+    async (
+      content: string,
+      history: Array<{ role: "user" | "assistant"; content: string }>,
+      systemPrompt: string,
+      webSearch: WebSearchMode = "auto"
+    ) => {
+      const activeId = TEMP_CONVERSATION_ID;
+
+      setStreaming(true);
+
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
+      const userId = `local-user-${crypto.randomUUID()}`;
+      const assistantId = `local-assistant-${crypto.randomUUID()}`;
+      lastAssistantIdRef.current = assistantId;
+
+      hasReceivedTokenRef.current = false;
+      lastSourcesRef.current = null;
+
+      const userMsg: LocalMessage = {
+        id: userId,
+        conversationId: activeId,
+        role: "user",
+        content,
+        createdAt: new Date().toISOString(),
+        local: true,
+        status: "normal",
+      };
+      onUserMessage(userMsg);
+
+      const assistantMsg: LocalMessage = {
+        id: assistantId,
+        conversationId: activeId,
+        role: "assistant",
+        content: "",
+        createdAt: new Date().toISOString(),
+        local: true,
+        status: "normal",
+      };
+      onAssistantStart(assistantMsg);
+
+      let full = "";
+
+      try {
+        await sendTemporaryMessageStream({
+          content,
+          history,
+          systemPrompt,
+          webSearch,
+          signal: ctrl.signal,
+
+          onTool: (evt) => {
+            if (evt.type === "tool" && evt.tool === "calculator") {
+              if (!hasReceivedTokenRef.current) {
+                onAssistantReplace({
+                  id: assistantId,
+                  conversationId: activeId,
+                  role: "assistant",
+                  content: "__CALCULATING__",
+                  createdAt: new Date().toISOString(),
+                  local: true,
+                  status: "normal",
+                });
+              }
+              return;
+            }
+
+            if (evt.type === "tool" && evt.tool === "web_search") {
+              if (!hasReceivedTokenRef.current) {
+                onAssistantReplace({
+                  id: assistantId,
+                  conversationId: activeId,
+                  role: "assistant",
+                  content: "__SEARCHING__",
+                  createdAt: new Date().toISOString(),
+                  local: true,
+                  status: "normal",
+                });
+              }
+              return;
+            }
+
+            if (evt.type === "tool" && evt.tool === "fetch_url") {
+              if (!hasReceivedTokenRef.current) {
+                onAssistantReplace({
+                  id: assistantId,
+                  conversationId: activeId,
+                  role: "assistant",
+                  content: "__FETCHING_URL__",
+                  createdAt: new Date().toISOString(),
+                  local: true,
+                  status: "normal",
+                });
+              }
+              return;
+            }
+
+            if (evt.type === "tool_result" && evt.tool === "web_search") {
+              const sources = (evt.results ?? []) as WebSource[];
+              lastSourcesRef.current = sources;
+              onSources?.(sources, activeId);
+              return;
+            }
+
+            if (evt.type === "tool_result" && evt.tool === "calculator") return;
+            if (evt.type === "tool_result" && evt.tool === "fetch_url") return;
+          },
+
+          onToken: (t) => {
+            if (!hasReceivedTokenRef.current) {
+              hasReceivedTokenRef.current = true;
+            }
+            full += t;
+            onAssistantDelta(full);
+          },
+        });
+      } catch (err) {
+        if (ctrl.signal.aborted || isAbortError(err)) {
+          onAssistantReplace({
+            ...assistantMsg,
+            content: "Prompt cancelled",
+            status: "cancelled",
+          });
+          return;
+        }
+        throw err;
+      } finally {
+        abortRef.current = null;
+        setStreaming(false);
+      }
+    },
+    [onUserMessage, onAssistantStart, onAssistantReplace, onAssistantDelta, onSources]
+  );
+
+  return { send, sendTemporary, stop, streaming };
 }

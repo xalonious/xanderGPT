@@ -47,7 +47,10 @@ export default function Sidebar() {
   }, [id]);
 
   const onNewChat = () => {
-    navigate("/c/new");
+    navigate("/c/new", {
+      replace: activeId === null,
+      state: { newChatNonce: Date.now() },
+    });
   };
 
   const startRename = (conversationId: string, currentTitle: string | null) => {
@@ -164,7 +167,10 @@ export default function Sidebar() {
                         if (!confirm("Delete this conversation?")) return;
 
                         if (activeId === c.id) {
-                          navigate("/c/new", { replace: true });
+                          navigate("/c/new", {
+                            replace: true,
+                            state: { newChatNonce: Date.now() },
+                          });
                         }
 
                         try {

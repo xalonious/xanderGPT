@@ -1,33 +1,292 @@
 # xanderGPT
 
-xanderGPT is a lightweight ChatGPT-style web application powered by a local LLM through Ollama.
+xanderGPT is a self-hosted, ChatGPT-style web application powered by a local
+language model through Ollama. It combines a responsive React interface with an
+Express API, persistent MySQL storage, account authentication, streaming
+responses, and optional web-aware tools.
 
-It provides real-time streaming conversations, persistent chat history, authentication, optional web search, automatic tool usage, and rich content rendering — all running on your own machine with your own model.
+## Overview
 
-Built with React, Node.js, Express, Prisma, and MySQL.
+xanderGPT is designed for running a private AI assistant on your own hardware.
+Users can create an account, organize persistent conversations, customize the
+assistant for each chat, or start a temporary conversation that is not saved to
+the database.
 
-## Core Features
+The backend sends prompts to Ollama and streams generated tokens to the browser
+as NDJSON. Before answering, it can automatically decide whether to evaluate a
+calculation, read a URL included in the prompt, or search the web through the
+Brave Search API.
 
-- Real-time streaming chat using NDJSON  
-- Per-conversation system prompts  
-- Persistent conversations with Prisma and MySQL  
-- JWT-based authentication with protected routes  
-- Optional web search integration with Brave Search API  
-- Direct URL fetching and summarization (paste a link and ask about it)  
-- Automatic calculator tool (LLM decides when to compute expressions)  
-- Automatic Markdown rendering (code blocks, tables, links, lists, etc.)  
-- LaTeX math rendering with KaTeX  
-- Smart tool routing (automatically decides when to search, fetch, or calculate)
-- Temporary chat mode
-- Fully self-hosted AI using Ollama  
+## Features
 
-## Tech Stack
+- Local inference through Ollama
+- Real-time, cancellable response streaming with NDJSON
+- Email and password authentication with HTTP-only JWT cookies
+- Persistent conversations and messages stored with Prisma and MySQL
+- Per-conversation system prompts and automatic conversation titles
+- Temporary chat mode that does not write messages to the database
+- Automatic or user-forced Brave web search for current information
+- Direct extraction and summarization of linked web pages
+- Automatic calculator routing for mathematical expressions
+- Markdown, GitHub-flavored tables, syntax-highlighted code, and links
+- LaTeX rendering through KaTeX
+- Responsive desktop and mobile chat interface
+- Input validation, security headers, CORS controls, and protected API routes
 
-- Frontend: React, Vite, TypeScript  
-- Backend: Node.js, Express, TypeScript  
-- Database: MySQL with Prisma ORM  
-- LLM: Ollama `/api/chat`  
+## Tech stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 19, Vite, TypeScript, Tailwind CSS |
+| Content rendering | React Markdown, Remark GFM, KaTeX, Highlight.js |
+| Backend | Node.js, Express 5, TypeScript |
+| Database | MySQL, Prisma ORM |
+| Authentication | Argon2, JWT, HTTP-only cookies |
+| Local AI | Ollama using the included `Modelfile` |
+| Tools | Brave Search API, Mozilla Readability, Math.js |
+
+## Prerequisites
+
+Before installing xanderGPT, make sure you have:
+
+- [Node.js](https://nodejs.org/) 20.19 or newer
+- [MySQL](https://www.mysql.com/) with an empty database for the application
+- [Ollama](https://ollama.com/) installed and running
+- A [Brave Search API](https://brave.com/search/api/) key if you want web search
+
+The included model configuration is based on `qwen2.5:7b`. Running it locally
+requires enough memory for the model and its context.
+
+## Setup
+
+Clone the repository:
+
+```bash
+git clone https://github.com/xalonious/xanderGPT.git
+cd xanderGPT
+```
+
+### 1. Create the Ollama model
+
+From the repository root, pull the base model and create the configured
+`xandergpt` model:
+
+```bash
+ollama pull qwen2.5:7b
+ollama create xandergpt -f Modelfile
+```
+
+The `Modelfile` defines the assistant identity and default generation settings.
+You can use a different Ollama model by changing `OLLAMA_MODEL`, but the named
+model must already exist in Ollama.
+
+### 2. Configure the backend
+
+Install the backend dependencies:
+
+```bash
+cd backend
+npm install
+```
+
+Copy `backend/.env.example` to `backend/.env`, then configure it. A typical
+local setup looks like this:
+
+```env
+PORT=3000
+CORS_ORIGIN=http://localhost:5173
+DATABASE_URL=mysql://USER:PASSWORD@localhost:3306/xandergpt
+BRAVE_API_KEY=YOUR_BRAVE_SEARCH_API_KEY
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=xandergpt
+JWT_SECRET=REPLACE_WITH_A_LONG_RANDOM_SECRET
+JWT_ISSUER=localhost
+JWT_AUDIENCE=localhost
+```
+
+Create the database in MySQL if it does not exist:
+
+```sql
+CREATE DATABASE xandergpt;
+```
+
+Generate the Prisma client and apply the existing migrations:
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
+
+### 3. Configure the frontend
+
+In a new terminal, install the frontend dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+Copy `frontend/.env.example` to `frontend/.env` and point it at the backend API:
+
+```env
+VITE_API_URL=http://localhost:3000/api
+```
+
+The frontend URL must match the backend's `CORS_ORIGIN`. Authentication uses
+cookies, so mismatched origins or ports can prevent login from working.
+
+## Running the application
+
+Make sure Ollama is running:
+
+```bash
+ollama serve
+```
+
+Start the backend from `backend/`:
+
+```bash
+npm run dev
+```
+
+Start the frontend from `frontend/` in a separate terminal:
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:5173`, register an account, and start a conversation. The
+health endpoint is available at `http://localhost:3000/api/health/ping` when the
+example ports above are used.
+
+## Environment variables
+
+### Backend
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `PORT` | Yes | Port used by the Express API |
+| `CORS_ORIGIN` | Yes | Frontend origin allowed to make credentialed API requests |
+| `DATABASE_URL` | Yes | MySQL connection URL used by Prisma |
+| `OLLAMA_URL` | No | Ollama server URL; defaults to `http://localhost:11434` |
+| `OLLAMA_MODEL` | No | Ollama model name; defaults to `xandergpt` |
+| `BRAVE_API_KEY` | For search | Brave Search API key used by the web-search tool |
+| `JWT_SECRET` | Yes | Secret used to sign authentication tokens |
+| `JWT_EXPIRY` | No | JWT lifetime; defaults to `7d` |
+| `JWT_ISSUER` | No | Optional expected JWT issuer |
+| `JWT_AUDIENCE` | No | Optional expected JWT audience |
+| `NODE_ENV` | No | Set to `production` to use secure, cross-site authentication cookies |
+
+### Frontend
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `VITE_API_URL` | Yes | Full backend API base URL, including the `/api` prefix |
+
+Web search is the only feature that requires `BRAVE_API_KEY`. Local chat, URL
+extraction, and calculator routing can still operate without it, although a
+prompt that triggers search will fail until a key is configured.
+
+## How chat and tools work
+
+For each message, the backend loads recent conversation history, combines the
+application prompt with any conversation-specific instructions, and asks the
+local model which tools are relevant.
+
+- **Web search:** The model can search automatically when a prompt needs current
+  information. The tools menu can force search for the next message.
+- **URL reader:** When a message contains a public HTTP or HTTPS URL, xanderGPT
+  extracts the page's readable text and adds it as context. Local and private
+  network addresses are blocked.
+- **Calculator:** Mathematical prompts can be routed through Math.js so the
+  answer uses an evaluated result rather than model arithmetic.
+- **Temporary chat:** Messages and the temporary system prompt remain in the
+  browser session and are sent as short-lived request context, without creating
+  conversation or message records in MySQL.
+
+Only the first URL in a message is extracted. URL reading currently accepts
+HTML pages, limits page size and extracted context, and may fail on paywalls,
+consent screens, or bot-protected sites.
+
+## API overview
+
+All routes are prefixed with `/api`. Conversation routes require a valid
+`auth_token` cookie.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health/ping` | Check whether the API is available |
+| `POST` | `/auth/register` | Create an account |
+| `POST` | `/auth/login` | Log in and set the authentication cookie |
+| `POST` | `/auth/logout` | Clear the authentication cookie |
+| `GET` | `/auth/me` | Return the authenticated user |
+| `GET` | `/conversations` | List the user's conversations |
+| `POST` | `/conversations` | Create a conversation |
+| `PATCH` | `/conversations/:id` | Update a title or system prompt |
+| `DELETE` | `/conversations/:id` | Delete a conversation and its messages |
+| `GET` | `/conversations/:id/messages` | List messages in a conversation |
+| `POST` | `/conversations/:id/messages` | Send a message without streaming |
+| `POST` | `/conversations/:id/messages/stream` | Send a message as an NDJSON stream |
+| `POST` | `/conversations/temp/stream` | Stream a temporary, non-persistent chat |
+
+The streaming endpoints can emit `token`, `tool`, `tool_result`, `title`,
+`done`, and `error` events. Closing or cancelling the request aborts generation
+on the server.
+
+## Project structure
+
+```text
+xanderGPT/
+|-- backend/
+|   |-- prisma/             # Database schema and migrations
+|   `-- src/
+|       |-- core/           # Authentication, middleware, logging, and errors
+|       |-- data/           # Prisma connection and optional seed script
+|       |-- rest/           # Auth, health, and conversation routes
+|       |-- service/        # Chat, Ollama, authentication, and tool logic
+|       `-- validation/     # Joi request schemas
+|-- frontend/
+|   |-- public/             # Static images and icons
+|   `-- src/
+|       |-- api/            # REST and streaming API clients
+|       |-- auth/           # Authentication context and route guard
+|       |-- components/     # Reusable chat interface components
+|       |-- hooks/          # Conversation, message, and stream state
+|       `-- pages/          # Login, registration, layout, and chat pages
+|-- Modelfile               # Ollama model configuration
+`-- README.md
+```
+
+## Available scripts
+
+Run these commands from the indicated directory.
+
+| Directory | Command | Description |
+| --- | --- | --- |
+| `backend/` | `npm run dev` | Start the API with automatic TypeScript restarts |
+| `backend/` | `npm run initdb` | Create a development Prisma migration named `init` |
+| `backend/` | `npm run seed` | Create the development test user defined in the seed script |
+| `frontend/` | `npm run dev` | Start the Vite development server |
+| `frontend/` | `npm run build` | Type-check and create a production frontend build |
+| `frontend/` | `npm run lint` | Run ESLint across the frontend |
+| `frontend/` | `npm run preview` | Preview the production frontend build locally |
+
+The seed script contains a fixed development credential and should not be used
+to provision production accounts.
+
+## Production notes
+
+The repository currently provides development scripts but does not include a
+complete production deployment configuration. Before exposing it publicly:
+
+- Use a long, randomly generated `JWT_SECRET` and production database account.
+- Serve both applications over HTTPS and set `NODE_ENV=production`.
+- Restrict `CORS_ORIGIN` to the deployed frontend origin.
+- Place the Express API and Ollama behind appropriate network controls.
+- Do not expose Ollama or MySQL directly to the public internet.
+- Add your preferred process manager, reverse proxy, monitoring, and backup
+  strategy.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).

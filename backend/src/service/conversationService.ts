@@ -1,7 +1,11 @@
 import { prisma } from "../data";
 import ServiceError from "../core/ServiceError";
 import { ollamaChat, ollamaChatStream, type OllamaMessage } from "./ollamaService";
-import { braveWebSearch, formatWebResultsForPrompt } from "./braveSearchService";
+import {
+  braveWebSearch,
+  formatWebResultsForPrompt,
+  type BraveWebResult,
+} from "./braveSearchService";
 import {
   decideWebSearch,
   decideMoreWebResults,
@@ -23,7 +27,7 @@ type WebSearchMode = "auto" | "force" | "off";
 
 type ToolEvent =
   | { type: "tool"; tool: "web_search"; query: string }
-  | { type: "tool_result"; tool: "web_search"; query: string; results: any[] }
+  | { type: "tool_result"; tool: "web_search"; query: string; results: BraveWebResult[] }
   | { type: "tool"; tool: "fetch_url"; url: string }
   | {
       type: "tool_result";
@@ -526,7 +530,14 @@ export async function getConversationMessages(userId: string, conversationId: st
   return prisma.message.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      conversationId: true,
+      role: true,
+      content: true,
+      sources: true,
+      createdAt: true,
+    },
   });
 }
 
@@ -543,7 +554,14 @@ export async function sendMessageNonStream(userId: string, conversationId: strin
 
   const assistantMessage = await prisma.message.create({
     data: { conversationId, role: "assistant", content: assistantText },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      conversationId: true,
+      role: true,
+      content: true,
+      sources: true,
+      createdAt: true,
+    },
   });
 
   await prisma.conversation.update({
@@ -584,6 +602,14 @@ export async function sendMessageStream(
     typeof onTokenOrOpts === "function" ? "auto" : onTokenOrOpts.webSearchMode ?? "auto";
 
   const onToolEvent = typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onToolEvent;
+  let webSources: BraveWebResult[] = [];
+
+  const handleToolEvent = (evt: ToolEvent) => {
+    if (evt.type === "tool_result" && evt.tool === "web_search") {
+      webSources = evt.results;
+    }
+    onToolEvent?.(evt);
+  };
 
   if (signal?.aborted) {
     return { assistantMessage: null, titleUpdated: null, aborted: true };
@@ -595,7 +621,7 @@ export async function sendMessageStream(
     onToken,
     signal,
     webSearchMode,
-    onToolEvent,
+    onToolEvent: handleToolEvent,
   });
 
   if (streamResult.aborted) {
@@ -610,8 +636,20 @@ export async function sendMessageStream(
     });
 
     const assistantMsg = await tx.message.create({
-      data: { conversationId, role: "assistant", content: streamResult.assistantText },
-      select: { id: true, role: true, content: true, createdAt: true },
+      data: {
+        conversationId,
+        role: "assistant",
+        content: streamResult.assistantText,
+        sources: webSources.length > 0 ? webSources : undefined,
+      },
+      select: {
+        id: true,
+        conversationId: true,
+        role: true,
+        content: true,
+        sources: true,
+        createdAt: true,
+      },
     });
 
     await tx.conversation.update({

@@ -10,11 +10,18 @@ export type ConversationDTO = {
 
 export type MessageRole = "system" | "user" | "assistant";
 
+export type WebSource = {
+  title: string;
+  url: string;
+  description: string;
+};
+
 export type MessageDTO = {
   id: string;
   conversationId: string;
   role: MessageRole;
   content: string;
+  sources: WebSource[] | null;
   createdAt: string;
 };
 

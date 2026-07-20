@@ -6,13 +6,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
-type WebSource = {
-  title: string;
-  url: string;
-  description?: string;
-};
-
-type MessageWithSources = convoApi.MessageDTO & { sources?: WebSource[] };
+type WebSource = convoApi.WebSource;
 
 function nodeToText(node: React.ReactNode): string {
   if (node == null) return "";
@@ -209,7 +203,7 @@ function SourcesPanel({ sources }: { sources: WebSource[] }) {
   );
 }
 
-export default function MessageBubble({ message }: { message: MessageWithSources }) {
+export default function MessageBubble({ message }: { message: convoApi.MessageDTO }) {
   const isUser = message.role === "user";
 
   if (isUser) {

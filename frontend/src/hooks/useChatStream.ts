@@ -4,18 +4,15 @@ import * as convoApi from "../api/conversations";
 
 type LocalStatus = "normal" | "cancelled";
 
-type LocalMessage = convoApi.MessageDTO & {
+type LocalMessage = Omit<convoApi.MessageDTO, "sources"> & {
+  sources?: convoApi.WebSource[] | null;
   local?: boolean;
   status?: LocalStatus;
 };
 
 type WebSearchMode = "auto" | "force" | "off";
 
-type WebSource = {
-  title: string;
-  url: string;
-  description: string;
-};
+type WebSource = convoApi.WebSource;
 
 const TEMP_CONVERSATION_ID = "__temp__";
 

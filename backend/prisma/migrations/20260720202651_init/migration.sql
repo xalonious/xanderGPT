@@ -14,6 +14,7 @@ CREATE TABLE `User` (
 CREATE TABLE `Conversation` (
     `id` VARCHAR(191) NOT NULL,
     `title` VARCHAR(191) NULL,
+    `systemPrompt` LONGTEXT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
     `userId` VARCHAR(191) NOT NULL,
@@ -27,6 +28,7 @@ CREATE TABLE `Message` (
     `id` VARCHAR(191) NOT NULL,
     `role` ENUM('system', 'user', 'assistant') NOT NULL,
     `content` LONGTEXT NOT NULL,
+    `sources` JSON NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `conversationId` VARCHAR(191) NOT NULL,
 

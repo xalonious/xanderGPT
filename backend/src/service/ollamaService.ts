@@ -8,7 +8,7 @@ const DEFAULT_OPTIONS = {
   temperature: 0.6,
   top_p: 0.9,
   repeat_penalty: 1.1,
-  num_predict: 384,
+  num_predict: 4096,
 };
 
 type OllamaOptions = Partial<typeof DEFAULT_OPTIONS> & Record<string, any>;

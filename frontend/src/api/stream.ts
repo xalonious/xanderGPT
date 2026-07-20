@@ -7,6 +7,7 @@ type StreamEvent =
       type: "tool_result";
       tool: "web_search";
       query: string;
+      queries: string[];
       results: Array<{ title: string; url: string; description: string }>;
     }
   | {

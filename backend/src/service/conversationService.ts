@@ -1,24 +1,19 @@
 import { prisma } from "../data";
 import ServiceError from "../core/ServiceError";
 import { ollamaChat, ollamaChatStream, type OllamaMessage } from "./ollamaService";
-import {
-  braveWebSearch,
-  formatWebResultsForPrompt,
-  type BraveWebResult,
-} from "./braveSearchService";
+import type { BraveWebResult } from "./braveSearchService";
 import {
   decideWebSearch,
-  decideMoreWebResults,
+  planForcedWebSearch,
   decideCalculator,
   extractFirstUrl,
+  hasStrongWebSearchCue,
 } from "./toolRoutingService";
 import { fetchAndExtractUrl } from "./urlFetchService";
 import { evaluateExpression } from "./calculatorService";
+import { retrieveWebEvidence } from "./webRetrievalService";
 
 const HISTORY_MESSAGE_LIMIT = 30;
-const WEB_SEARCH_INITIAL = 5;
-const WEB_SEARCH_MAX_TOTAL = 10;
-const WEB_SEARCH_MAX_ROUNDS = 3;
 
 const URL_TOOL_MAX_CHARS = 18_000;
 const URL_TOOL_EXCERPT_CHARS = 280;
@@ -27,7 +22,13 @@ type WebSearchMode = "auto" | "force" | "off";
 
 type ToolEvent =
   | { type: "tool"; tool: "web_search"; query: string }
-  | { type: "tool_result"; tool: "web_search"; query: string; results: BraveWebResult[] }
+  | {
+      type: "tool_result";
+      tool: "web_search";
+      query: string;
+      queries: string[];
+      results: BraveWebResult[];
+    }
   | { type: "tool"; tool: "fetch_url"; url: string }
   | {
       type: "tool_result";
@@ -276,52 +277,58 @@ async function buildToolSystemBlocks(
     }
   }
 
-  const calcDecision = await decideCalculator(history, trimmed, signal);
-  if (calcDecision.useCalc) {
-    const expression = calcDecision.expression;
-    onToolEvent?.({ type: "tool", tool: "calculator", expression });
+  const shouldRouteCalculator =
+    webSearchMode !== "force" &&
+    !(webSearchMode !== "off" && hasStrongWebSearchCue(trimmed));
 
-    try {
-      const value = evaluateExpression(expression);
-      const result = String(value);
+  if (shouldRouteCalculator) {
+    const calcDecision = await decideCalculator(history, trimmed, signal);
+    if (calcDecision.useCalc) {
+      const expression = calcDecision.expression;
+      onToolEvent?.({ type: "tool", tool: "calculator", expression });
 
-      onToolEvent?.({
-        type: "tool_result",
-        tool: "calculator",
-        expression,
-        result,
-        value,
-      });
+      try {
+        const value = evaluateExpression(expression);
+        const result = String(value);
 
-      toolSystemBlocks.push({
-        role: "system",
-        content:
-          "TOOL RESULT (calculator):\n" +
-          `expression: ${expression}\n` +
-          `result: ${result}\n\n` +
-          "Use this calculator result as the final numeric answer.\n" +
-          "DO NOT ask the user for permission to compute.\n" +
-          "DO NOT ask follow-up questions unless the expression is ambiguous.\n" +
-          "If the user asked to compute/evaluate, give the result immediately.\n" +
-          "Prefer replying with just the final value (and optionally one short line of working) unless the user asked for steps.\n",
-      });
-    } catch (err: any) {
-      const msg = String(err?.message ?? "calculator error");
-      onToolEvent?.({
-        type: "tool_result",
-        tool: "calculator",
-        expression,
-        result: `Error: ${msg}`,
-      });
+        onToolEvent?.({
+          type: "tool_result",
+          tool: "calculator",
+          expression,
+          result,
+          value,
+        });
 
-      toolSystemBlocks.push({
-        role: "system",
-        content:
-          "TOOL FAILURE (calculator): The expression could not be evaluated safely.\n" +
-          `expression: ${expression}\n` +
-          `error: ${msg}\n\n` +
-          "Ask the user to rephrase the expression.",
-      });
+        toolSystemBlocks.push({
+          role: "system",
+          content:
+            "TOOL RESULT (calculator):\n" +
+            `expression: ${expression}\n` +
+            `result: ${result}\n\n` +
+            "Use this calculator result as the final numeric answer.\n" +
+            "DO NOT ask the user for permission to compute.\n" +
+            "DO NOT ask follow-up questions unless the expression is ambiguous.\n" +
+            "If the user asked to compute/evaluate, give the result immediately.\n" +
+            "Prefer replying with just the final value (and optionally one short line of working) unless the user asked for steps.\n",
+        });
+      } catch (err: any) {
+        const msg = String(err?.message ?? "calculator error");
+        onToolEvent?.({
+          type: "tool_result",
+          tool: "calculator",
+          expression,
+          result: `Error: ${msg}`,
+        });
+
+        toolSystemBlocks.push({
+          role: "system",
+          content:
+            "TOOL FAILURE (calculator): The expression could not be evaluated safely.\n" +
+            `expression: ${expression}\n` +
+            `error: ${msg}\n\n` +
+            "Ask the user to rephrase the expression.",
+        });
+      }
     }
   }
 
@@ -330,64 +337,26 @@ async function buildToolSystemBlocks(
   if (allowWebSearch) {
     const decision =
       webSearchMode === "force"
-        ? { useWeb: true as const, query: trimmed, reason: "Forced by user toggle" }
+        ? await planForcedWebSearch(history, trimmed, signal)
         : await decideWebSearch(history, trimmed, signal);
 
     if (decision.useWeb) {
-      const query = decision.query;
-
-      onToolEvent?.({ type: "tool", tool: "web_search", query });
-
-      let results = await braveWebSearch(query, { count: WEB_SEARCH_INITIAL, signal });
-
-      let rounds = 1;
-      while (rounds < WEB_SEARCH_MAX_ROUNDS && results.length < WEB_SEARCH_MAX_TOTAL) {
-        const remaining = WEB_SEARCH_MAX_TOTAL - results.length;
-        const moreDecision = await decideMoreWebResults(trimmed, results, {
-          maxAdditional: Math.min(remaining, 10),
-          signal,
-        });
-
-        if (!moreDecision.needMore) break;
-
-        const fetchCount = Math.min(moreDecision.moreCount, remaining);
-        if (fetchCount <= 0) break;
-
-        const more = await braveWebSearch(query, {
-          count: fetchCount,
-          offset: results.length,
-          signal,
-        });
-
-        const seen = new Set(results.map((r) => r.url));
-        const uniqueMore = more.filter((r) => !seen.has(r.url));
-
-        if (uniqueMore.length === 0) break;
-
-        results = [...results, ...uniqueMore];
-        rounds++;
-      }
-
-      onToolEvent?.({ type: "tool_result", tool: "web_search", query, results });
-
-      const formatted = formatWebResultsForPrompt(results);
-      toolSystemBlocks = [
-        ...toolSystemBlocks,
-        {
-          role: "system",
-          content:
-            "You have web search results available. " +
-            "Treat the web results as the most up-to-date and authoritative information. " +
-            "If the web results conflict with your internal knowledge, prefer the web results. " +
-            "Assume the web results are correct unless multiple sources clearly contradict each other. " +
-            "Prefer information from official domains (e.g., openai.com, .gov) over third-party blogs. If multiple sources conflict, prioritize official sources." +
-            "Provide a direct answer based on the web results. " +
-            "Do NOT hedge based on outdated knowledge. " +
-            "Do NOT mention your training data. " +
-            "Do NOT include inline citations.",
+      const retrieval = await retrieveWebEvidence(trimmed, decision.query, {
+        signal,
+        onSearch: (query) => {
+          onToolEvent?.({ type: "tool", tool: "web_search", query });
         },
-        { role: "system", content: `Web search results:\n\n${formatted}` },
-      ];
+      });
+
+      onToolEvent?.({
+        type: "tool_result",
+        tool: "web_search",
+        query: decision.query,
+        queries: retrieval.queries,
+        results: retrieval.sources,
+      });
+
+      toolSystemBlocks = [...toolSystemBlocks, ...retrieval.systemBlocks];
     }
   }
 

@@ -25,7 +25,7 @@ Brave Search API.
 - Persistent conversations and messages stored with Prisma and MySQL
 - Per-conversation system prompts and automatic conversation titles
 - Temporary chat mode that does not write messages to the database
-- Automatic or user-forced Brave web search for current information
+- Automatic or user-forced Brave web search with query refinement and cited evidence
 - Direct extraction and summarization of linked web pages
 - Automatic calculator routing for mathematical expressions
 - Markdown, GitHub-flavored tables, syntax-highlighted code, and links
@@ -184,8 +184,9 @@ example ports above are used.
 | `VITE_API_URL` | Yes | Full backend API base URL, including the `/api` prefix |
 
 Web search is the only feature that requires `BRAVE_API_KEY`. Local chat, URL
-extraction, and calculator routing can still operate without it, although a
-prompt that triggers search will fail until a key is configured.
+extraction, and calculator routing still operate without it. If search is
+requested but unavailable, the assistant reports that current information could
+not be verified instead of treating the search as successful.
 
 ## How chat and tools work
 
@@ -194,7 +195,12 @@ application prompt with any conversation-specific instructions, and asks the
 local model which tools are relevant.
 
 - **Web search:** The model can search automatically when a prompt needs current
-  information. The tools menu can force search for the next message.
+  information, while the tools menu can force search for the next message. The
+  model creates a focused query, can rewrite it when the first results are weak,
+  selects promising pages, and fetches their readable contents. Relevant
+  passages are added as untrusted evidence and the final response cites the
+  sources it actually received. Search snippets are used as a clearly limited
+  fallback when pages cannot be extracted.
 - **URL reader:** When a message contains a public HTTP or HTTPS URL, xanderGPT
   extracts the page's readable text and adds it as context. Local and private
   network addresses are blocked.

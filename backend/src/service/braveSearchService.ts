@@ -19,11 +19,11 @@ function clamp(n: number, min: number, max: number) {
 export async function braveWebSearch(
   query: string,
   opts?: {
-    count?: number; 
-    offset?: number; 
+    count?: number;
+    offset?: number;
     safesearch?: "off" | "moderate" | "strict";
-    country?: string; 
-    lang?: string; 
+    country?: string;
+    lang?: string;
     signal?: AbortSignal;
   }
 ): Promise<BraveWebResult[]> {
@@ -45,7 +45,7 @@ export async function braveWebSearch(
   if (opts?.country) url.searchParams.set("country", opts.country);
   if (opts?.lang) url.searchParams.set("search_lang", opts.lang);
 
-  const r = await fetch(url.toString(), {
+  const response = await fetch(url.toString(), {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -54,31 +54,19 @@ export async function braveWebSearch(
     signal: opts?.signal,
   });
 
-  if (!r.ok) {
-    const details = await r.text().catch(() => "");
-    throw new Error(`Brave Search error (${r.status}): ${details || "Request failed"}`);
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`Brave Search error (${response.status}): ${details || "Request failed"}`);
   }
 
-  const data: any = await r.json();
-
+  const data: any = await response.json();
   const items: any[] = data?.web?.results ?? [];
+
   return items
-    .map((x) => ({
-      title: String(x?.title ?? "").trim(),
-      url: String(x?.url ?? "").trim(),
-      description: String(x?.description ?? "").trim(),
+    .map((item) => ({
+      title: String(item?.title ?? "").trim(),
+      url: String(item?.url ?? "").trim(),
+      description: String(item?.description ?? "").trim(),
     }))
-    .filter((x) => x.title && x.url);
-}
-
-export function formatWebResultsForPrompt(results: BraveWebResult[]): string {
-  if (!results?.length) return "No results.";
-
-  return results
-    .slice(0, 8)
-    .map((r, i) => {
-      const n = i + 1;
-      return `[${n}] ${r.title}\n${r.url}\n${r.description}`;
-    })
-    .join("\n\n");
+    .filter((item) => item.title && item.url);
 }

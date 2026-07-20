@@ -1,7 +1,12 @@
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import dns from "dns/promises";
 import net from "net";
+
+const readabilityConsole = new VirtualConsole();
+readabilityConsole.forwardTo(console, {
+  jsdomErrors: ["not-implemented", "resource-loading", "unhandled-exception"]
+});
 
 export type FetchUrlResult = {
   url: string;
@@ -75,40 +80,67 @@ async function fetchTextWithLimits(
   signal?: AbortSignal
 ): Promise<{ status: number; finalUrl: string; contentType?: string; text: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const timeout = setTimeout(() => controller.abort(), 6_000);
 
   const combined = new AbortController();
   const abort = () => combined.abort();
   const onAbort = () => abort();
 
+  if (signal?.aborted) combined.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
   controller.signal.addEventListener("abort", onAbort, { once: true });
 
   try {
-    const res = await fetch(url, {
-      signal: combined.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": "xanderGPT/1.0 (+fetch_url tool)",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    let currentUrl = url;
+
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      const safeUrl = await assertUrlSafe(currentUrl);
+      const res = await fetch(safeUrl, {
+        signal: combined.signal,
+        redirect: "manual",
+        headers: {
+          "User-Agent": "xanderGPT/1.0 (+fetch_url tool)",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        if (!location) throw new Error(`Redirect response ${res.status} had no location`);
+        if (redirects === 5) throw new Error("Too many redirects");
+
+        currentUrl = new URL(location, safeUrl).toString();
+        continue;
       }
-    });
 
-    const contentType = res.headers.get("content-type") ?? undefined;
+      if (!res.ok) {
+        throw new Error(`Page request failed (${res.status})`);
+      }
 
-    if (!contentType || !contentType.toLowerCase().includes("text/html")) {
-      throw new Error(`Unsupported content-type: ${contentType ?? "unknown"}`);
+      const contentType = res.headers.get("content-type") ?? undefined;
+
+      if (!contentType || !contentType.toLowerCase().includes("text/html")) {
+        throw new Error(`Unsupported content-type: ${contentType ?? "unknown"}`);
+      }
+
+      const html = await res.text();
+      if (html.length > 2_000_000) {
+        throw new Error("Page too large");
+      }
+
+      return {
+        status: res.status,
+        finalUrl: safeUrl.toString(),
+        contentType,
+        text: html
+      };
     }
 
-    const html = await res.text();
-    if (html.length > 2_000_000) {
-      throw new Error("Page too large");
-    }
-
-    return { status: res.status, finalUrl: res.url, contentType, text: html };
+    throw new Error("Too many redirects");
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
+    controller.signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -120,7 +152,10 @@ export async function fetchAndExtractUrl(
 
   const fetched = await fetchTextWithLimits(safe.toString(), opts?.signal);
 
-  const dom = new JSDOM(fetched.text, { url: fetched.finalUrl });
+  const dom = new JSDOM(fetched.text, {
+    url: fetched.finalUrl,
+    virtualConsole: readabilityConsole
+  });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 

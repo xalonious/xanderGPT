@@ -8,6 +8,7 @@ import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
 
 type WebSearchMode = "auto" | "force" | "off";
+type ThinkingMode = "auto" | "force" | "off";
 
 type WebSource = {
   title: string;
@@ -25,11 +26,12 @@ function upsertById(prev: AnyMessage[], msg: AnyMessage) {
   return copy;
 }
 
-function updateLastAssistantContent(prev: AnyMessage[], full: string) {
-  const copy = [...prev];
-  const idx = copy.map((x) => x.role).lastIndexOf("assistant");
+function updateMessageById(prev: AnyMessage[], id: string, updates: Partial<AnyMessage>) {
+  const idx = prev.findIndex((message) => message.id === id);
   if (idx === -1) return prev;
-  copy[idx] = { ...copy[idx], content: full };
+
+  const copy = [...prev];
+  copy[idx] = { ...copy[idx], ...updates };
   return copy;
 }
 
@@ -169,11 +171,11 @@ export default function ChatPage() {
   );
 
   const updateActiveAssistant = useCallback(
-    (full: string) => {
+    (assistantId: string, updates: Partial<AnyMessage>) => {
       if (temporaryChat) {
-        setTempMessages((prev) => updateLastAssistantContent(prev, full));
+        setTempMessages((prev) => updateMessageById(prev, assistantId, updates));
       } else {
-        setMessages((prev) => updateLastAssistantContent(prev, full));
+        setMessages((prev) => updateMessageById(prev, assistantId, updates));
       }
     },
     [temporaryChat, setMessages]
@@ -194,8 +196,16 @@ export default function ChatPage() {
       replaceActiveMessage(m);
     },
 
-    onAssistantDelta: (full) => {
-      updateActiveAssistant(full);
+    onAssistantDelta: (assistantId, full) => {
+      updateActiveAssistant(assistantId, { content: full });
+    },
+
+    onThinkingDelta: (assistantId, full) => {
+      updateActiveAssistant(assistantId, { thinking: full });
+    },
+
+    onThinkingComplete: (assistantId, durationMs) => {
+      updateActiveAssistant(assistantId, { thinkingDurationMs: durationMs });
     },
 
     onTitle: (title, cid) => {
@@ -229,9 +239,20 @@ export default function ChatPage() {
   }, [convoId, temporaryChat]);
 
   const stopRef = useRef(stop);
+  const preserveStreamOnCreatedConversationRef = useRef(false);
   useEffect(() => {
     stopRef.current = stop;
   }, [stop]);
+
+  useEffect(() => {
+    return () => {
+      if (preserveStreamOnCreatedConversationRef.current) {
+        preserveStreamOnCreatedConversationRef.current = false;
+        return;
+      }
+      stopRef.current();
+    };
+  }, [convoId, temporaryChat]);
 
   const setMessagesRef = useRef(setMessages);
   useEffect(() => {
@@ -287,7 +308,11 @@ export default function ChatPage() {
     }
   };
 
-  const onSend = async (text: string, webSearch: WebSearchMode) => {
+  const onSend = async (
+    text: string,
+    webSearch: WebSearchMode,
+    thinking: ThinkingMode
+  ) => {
     setError(null);
 
     try {
@@ -299,7 +324,7 @@ export default function ChatPage() {
             content: String(m.content ?? ""),
           }));
 
-        await sendTemporary(text, history, tempSystemPrompt, webSearch);
+        await sendTemporary(text, history, tempSystemPrompt, webSearch, thinking);
         return;
       }
 
@@ -320,10 +345,11 @@ export default function ChatPage() {
         } catch {
         }
 
+        preserveStreamOnCreatedConversationRef.current = true;
         navigate(`/c/${actualId}`, { replace: true });
       }
 
-      await send(text, actualId, webSearch);
+      await send(text, actualId, webSearch, thinking);
     } catch (e: any) {
       setError(e?.message ?? "Send failed");
     }

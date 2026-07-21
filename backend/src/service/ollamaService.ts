@@ -1,5 +1,6 @@
 type ChatRole = "system" | "user" | "assistant";
 export type OllamaMessage = { role: ChatRole; content: string };
+export type OllamaThink = boolean | "low" | "medium" | "high";
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "xandergpt";
@@ -8,16 +9,22 @@ const DEFAULT_OPTIONS = {
   temperature: 0.6,
   top_p: 0.9,
   repeat_penalty: 1.1,
-  num_predict: 4096,
+  num_predict: 6144,
 };
 
 type OllamaOptions = Partial<typeof DEFAULT_OPTIONS> & Record<string, any>;
 
-function buildBody(messages: OllamaMessage[], stream: boolean, optionsOverride?: OllamaOptions) {
+function buildBody(
+  messages: OllamaMessage[],
+  stream: boolean,
+  optionsOverride?: OllamaOptions,
+  think: OllamaThink = false
+) {
   return {
     model: OLLAMA_MODEL,
     messages,
     stream,
+    think,
     options: { ...DEFAULT_OPTIONS, ...(optionsOverride ?? {}) },
   };
 }
@@ -31,12 +38,13 @@ function isAbortError(err: unknown): boolean {
 export async function ollamaChat(
   messages: OllamaMessage[],
   optionsOverride?: OllamaOptions,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  think: OllamaThink = false
 ): Promise<string> {
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBody(messages, false, optionsOverride)),
+    body: JSON.stringify(buildBody(messages, false, optionsOverride, think)),
     signal,
   });
 
@@ -53,7 +61,9 @@ export async function ollamaChatStream(
   messages: OllamaMessage[],
   onToken: (token: string) => void,
   optionsOverride?: OllamaOptions,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onThinking?: (token: string) => void,
+  think: OllamaThink = false
 ): Promise<string> {
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
@@ -61,7 +71,7 @@ export async function ollamaChatStream(
     const r = await fetch(`${OLLAMA_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildBody(messages, true, optionsOverride)),
+      body: JSON.stringify(buildBody(messages, true, optionsOverride, think)),
       signal,
     });
 
@@ -104,6 +114,11 @@ export async function ollamaChatStream(
           chunk = JSON.parse(trimmed);
         } catch {
           continue;
+        }
+
+        const thinkingToken = chunk?.message?.thinking ?? "";
+        if (thinkingToken) {
+          onThinking?.(thinkingToken);
         }
 
         const token = chunk?.message?.content ?? "";

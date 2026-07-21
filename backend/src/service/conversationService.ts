@@ -3,9 +3,7 @@ import ServiceError from "../core/ServiceError";
 import { ollamaChat, ollamaChatStream, type OllamaMessage } from "./ollamaService";
 import type { BraveWebResult } from "./braveSearchService";
 import {
-  decideWebSearch,
-  planForcedWebSearch,
-  decideCalculator,
+  planRequest,
   extractFirstUrl,
   hasStrongWebSearchCue,
 } from "./toolRoutingService";
@@ -19,6 +17,14 @@ const URL_TOOL_MAX_CHARS = 18_000;
 const URL_TOOL_EXCERPT_CHARS = 280;
 
 type WebSearchMode = "auto" | "force" | "off";
+type ThinkingMode = "auto" | "force" | "off";
+
+type StreamResult = {
+  assistantText: string;
+  thinkingText: string;
+  thinkingDurationMs: number | null;
+  aborted: boolean;
+};
 
 type ToolEvent =
   | { type: "tool"; tool: "web_search"; query: string }
@@ -205,15 +211,31 @@ async function buildToolSystemBlocks(
   opts: {
     signal?: AbortSignal;
     webSearchMode?: WebSearchMode;
+    thinkingMode?: ThinkingMode;
     onToolEvent?: (evt: ToolEvent) => void;
   }
-): Promise<OllamaMessage[]> {
+): Promise<{ toolSystemBlocks: OllamaMessage[]; useThinking: boolean }> {
   const { signal, onToolEvent } = opts;
   const webSearchMode = opts.webSearchMode ?? "auto";
+  const thinkingMode = opts.thinkingMode ?? "auto";
 
   let toolSystemBlocks: OllamaMessage[] = [];
 
   const firstUrl = extractFirstUrl(trimmed);
+  const allowWeb = firstUrl ? webSearchMode === "force" : webSearchMode !== "off";
+  const requireWeb =
+    allowWeb &&
+    (webSearchMode === "force" ||
+      (webSearchMode !== "off" && hasStrongWebSearchCue(trimmed)));
+
+  const plan = await planRequest(history, trimmed, {
+    allowWeb,
+    requireWeb,
+    allowCalculator: true,
+    allowThinking: thinkingMode !== "off",
+    requireThinking: thinkingMode === "force",
+    signal,
+  });
 
   if (firstUrl) {
     onToolEvent?.({ type: "tool", tool: "fetch_url", url: firstUrl });
@@ -277,90 +299,74 @@ async function buildToolSystemBlocks(
     }
   }
 
-  const shouldRouteCalculator =
-    webSearchMode !== "force" &&
-    !(webSearchMode !== "off" && hasStrongWebSearchCue(trimmed));
+  if (plan.useCalculator && plan.expression) {
+    const expression = plan.expression;
+    onToolEvent?.({ type: "tool", tool: "calculator", expression });
 
-  if (shouldRouteCalculator) {
-    const calcDecision = await decideCalculator(history, trimmed, signal);
-    if (calcDecision.useCalc) {
-      const expression = calcDecision.expression;
-      onToolEvent?.({ type: "tool", tool: "calculator", expression });
-
-      try {
-        const value = evaluateExpression(expression);
-        const result = String(value);
-
-        onToolEvent?.({
-          type: "tool_result",
-          tool: "calculator",
-          expression,
-          result,
-          value,
-        });
-
-        toolSystemBlocks.push({
-          role: "system",
-          content:
-            "TOOL RESULT (calculator):\n" +
-            `expression: ${expression}\n` +
-            `result: ${result}\n\n` +
-            "Use this calculator result as the final numeric answer.\n" +
-            "DO NOT ask the user for permission to compute.\n" +
-            "DO NOT ask follow-up questions unless the expression is ambiguous.\n" +
-            "If the user asked to compute/evaluate, give the result immediately.\n" +
-            "Prefer replying with just the final value (and optionally one short line of working) unless the user asked for steps.\n",
-        });
-      } catch (err: any) {
-        const msg = String(err?.message ?? "calculator error");
-        onToolEvent?.({
-          type: "tool_result",
-          tool: "calculator",
-          expression,
-          result: `Error: ${msg}`,
-        });
-
-        toolSystemBlocks.push({
-          role: "system",
-          content:
-            "TOOL FAILURE (calculator): The expression could not be evaluated safely.\n" +
-            `expression: ${expression}\n` +
-            `error: ${msg}\n\n` +
-            "Ask the user to rephrase the expression.",
-        });
-      }
-    }
-  }
-
-  const allowWebSearch = firstUrl ? webSearchMode === "force" : webSearchMode !== "off";
-
-  if (allowWebSearch) {
-    const decision =
-      webSearchMode === "force"
-        ? await planForcedWebSearch(history, trimmed, signal)
-        : await decideWebSearch(history, trimmed, signal);
-
-    if (decision.useWeb) {
-      const retrieval = await retrieveWebEvidence(trimmed, decision.query, {
-        signal,
-        onSearch: (query) => {
-          onToolEvent?.({ type: "tool", tool: "web_search", query });
-        },
-      });
+    try {
+      const value = evaluateExpression(expression);
+      const result = String(value);
 
       onToolEvent?.({
         type: "tool_result",
-        tool: "web_search",
-        query: decision.query,
-        queries: retrieval.queries,
-        results: retrieval.sources,
+        tool: "calculator",
+        expression,
+        result,
+        value,
       });
 
-      toolSystemBlocks = [...toolSystemBlocks, ...retrieval.systemBlocks];
+      toolSystemBlocks.push({
+        role: "system",
+        content:
+          "TOOL RESULT (calculator):\n" +
+          `expression: ${expression}\n` +
+          `result: ${result}\n\n` +
+          "Use this calculator result as the final numeric answer.\n" +
+          "DO NOT ask the user for permission to compute.\n" +
+          "DO NOT ask follow-up questions unless the expression is ambiguous.\n" +
+          "If the user asked to compute/evaluate, give the result immediately.\n" +
+          "Prefer replying with just the final value (and optionally one short line of working) unless the user asked for steps.\n",
+      });
+    } catch (err: any) {
+      const msg = String(err?.message ?? "calculator error");
+      onToolEvent?.({
+        type: "tool_result",
+        tool: "calculator",
+        expression,
+        result: `Error: ${msg}`,
+      });
+
+      toolSystemBlocks.push({
+        role: "system",
+        content:
+          "TOOL FAILURE (calculator): The expression could not be evaluated safely.\n" +
+          `expression: ${expression}\n` +
+          `error: ${msg}\n\n` +
+          "Ask the user to rephrase the expression.",
+      });
     }
   }
 
-  return toolSystemBlocks;
+  if (plan.useWeb && plan.query) {
+    const retrieval = await retrieveWebEvidence(trimmed, plan.query, {
+      signal,
+      onSearch: (query) => {
+        onToolEvent?.({ type: "tool", tool: "web_search", query });
+      },
+    });
+
+    onToolEvent?.({
+      type: "tool_result",
+      tool: "web_search",
+      query: plan.query,
+      queries: retrieval.queries,
+      results: retrieval.sources,
+    });
+
+    toolSystemBlocks = [...toolSystemBlocks, ...retrieval.systemBlocks];
+  }
+
+  return { toolSystemBlocks, useThinking: plan.useThinking };
 }
 
 async function runStreamWithHistory(
@@ -368,44 +374,104 @@ async function runStreamWithHistory(
   content: string,
   opts: {
     onToken: (token: string) => void;
+    onThinking?: (token: string) => void;
     signal?: AbortSignal;
     webSearchMode?: WebSearchMode;
+    thinkingMode?: ThinkingMode;
     onToolEvent?: (evt: ToolEvent) => void;
   }
-): Promise<{ assistantText: string; aborted: boolean }> {
+): Promise<StreamResult> {
   const trimmed = assertNonEmpty(content);
 
   if (opts.signal?.aborted) {
-    return { assistantText: "", aborted: true };
+    return {
+      assistantText: "",
+      thinkingText: "",
+      thinkingDurationMs: null,
+      aborted: true,
+    };
   }
 
-  const toolSystemBlocks = await buildToolSystemBlocks(history, trimmed, {
+  const { toolSystemBlocks, useThinking } = await buildToolSystemBlocks(history, trimmed, {
     signal: opts.signal,
     webSearchMode: opts.webSearchMode,
+    thinkingMode: opts.thinkingMode,
     onToolEvent: opts.onToolEvent,
   });
 
   if (opts.signal?.aborted) {
-    return { assistantText: "", aborted: true };
+    return {
+      assistantText: "",
+      thinkingText: "",
+      thinkingDurationMs: null,
+      aborted: true,
+    };
   }
 
   const prompt: OllamaMessage[] = [...history, ...toolSystemBlocks, { role: "user", content: trimmed }];
 
   let assistantText = "";
+  let thinkingText = "";
+  let thinkingStartedAt: number | null = null;
+  let thinkingFinishedAt: number | null = null;
+
+  const getThinkingDurationMs = () => {
+    if (thinkingStartedAt === null) return null;
+    return Math.max(0, (thinkingFinishedAt ?? Date.now()) - thinkingStartedAt);
+  };
+
   try {
-    assistantText = await ollamaChatStream(prompt, opts.onToken, undefined, opts.signal);
+    await ollamaChatStream(
+      prompt,
+      (token) => {
+        if (thinkingStartedAt !== null && thinkingFinishedAt === null) {
+          thinkingFinishedAt = Date.now();
+        }
+        assistantText += token;
+        opts.onToken(token);
+      },
+      useThinking
+        ? { temperature: 0.6, top_p: 0.95, top_k: 20 }
+        : { temperature: 0.7, top_p: 0.8, top_k: 20 },
+      opts.signal,
+      (token) => {
+        if (thinkingStartedAt === null) thinkingStartedAt = Date.now();
+        thinkingText += token;
+        opts.onThinking?.(token);
+      },
+      useThinking
+    );
   } catch (err) {
     if (opts.signal?.aborted || isAbortError(err)) {
-      return { assistantText: "", aborted: true };
+      return {
+        assistantText,
+        thinkingText,
+        thinkingDurationMs: getThinkingDurationMs(),
+        aborted: true,
+      };
     }
     throw err;
   }
 
-  if (opts.signal?.aborted) {
-    return { assistantText: "", aborted: true };
+  if (thinkingStartedAt !== null && thinkingFinishedAt === null) {
+    thinkingFinishedAt = Date.now();
   }
 
-  return { assistantText, aborted: false };
+  if (opts.signal?.aborted) {
+    return {
+      assistantText,
+      thinkingText,
+      thinkingDurationMs: getThinkingDurationMs(),
+      aborted: true,
+    };
+  }
+
+  return {
+    assistantText,
+    thinkingText,
+    thinkingDurationMs: getThinkingDurationMs(),
+    aborted: false,
+  };
 }
 
 export async function listConversations(userId: string) {
@@ -504,6 +570,8 @@ export async function getConversationMessages(userId: string, conversationId: st
       conversationId: true,
       role: true,
       content: true,
+      thinking: true,
+      thinkingDurationMs: true,
       sources: true,
       createdAt: true,
     },
@@ -528,6 +596,8 @@ export async function sendMessageNonStream(userId: string, conversationId: strin
       conversationId: true,
       role: true,
       content: true,
+      thinking: true,
+      thinkingDurationMs: true,
       sources: true,
       createdAt: true,
     },
@@ -551,8 +621,10 @@ export async function sendMessageStream(
     | ((token: string) => void)
     | {
         onToken: (token: string) => void;
+        onThinking?: (token: string) => void;
         signal?: AbortSignal;
         webSearchMode?: WebSearchMode;
+        thinkingMode?: ThinkingMode;
         onToolEvent?: (evt: ToolEvent) => void;
       },
   maybeSignal?: AbortSignal
@@ -569,6 +641,11 @@ export async function sendMessageStream(
 
   const webSearchMode: WebSearchMode =
     typeof onTokenOrOpts === "function" ? "auto" : onTokenOrOpts.webSearchMode ?? "auto";
+
+  const thinkingMode: ThinkingMode =
+    typeof onTokenOrOpts === "function" ? "auto" : onTokenOrOpts.thinkingMode ?? "auto";
+
+  const onThinking = typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onThinking;
 
   const onToolEvent = typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onToolEvent;
   let webSources: BraveWebResult[] = [];
@@ -588,8 +665,10 @@ export async function sendMessageStream(
 
   const streamResult = await runStreamWithHistory(history, trimmed, {
     onToken,
+    onThinking,
     signal,
     webSearchMode,
+    thinkingMode,
     onToolEvent: handleToolEvent,
   });
 
@@ -609,6 +688,8 @@ export async function sendMessageStream(
         conversationId,
         role: "assistant",
         content: streamResult.assistantText,
+        thinking: streamResult.thinkingText || null,
+        thinkingDurationMs: streamResult.thinkingDurationMs,
         sources: webSources.length > 0 ? webSources : undefined,
       },
       select: {
@@ -616,6 +697,8 @@ export async function sendMessageStream(
         conversationId: true,
         role: true,
         content: true,
+        thinking: true,
+        thinkingDurationMs: true,
         sources: true,
         createdAt: true,
       },
@@ -641,11 +724,13 @@ export async function sendTemporaryMessageStream(
   systemPrompt: string,
   opts: {
     onToken: (token: string) => void;
+    onThinking?: (token: string) => void;
     signal?: AbortSignal;
     webSearchMode?: WebSearchMode;
+    thinkingMode?: ThinkingMode;
     onToolEvent?: (evt: ToolEvent) => void;
   }
-): Promise<{ assistantText: string; aborted: boolean }> {
+): Promise<StreamResult> {
   const trimmed = assertNonEmpty(content);
 
   const cappedHistory = history
@@ -665,8 +750,10 @@ export async function sendTemporaryMessageStream(
 
   return runStreamWithHistory(composedHistory, trimmed, {
     onToken: opts.onToken,
+    onThinking: opts.onThinking,
     signal: opts.signal,
     webSearchMode: opts.webSearchMode,
+    thinkingMode: opts.thinkingMode,
     onToolEvent: opts.onToolEvent,
   });
 }

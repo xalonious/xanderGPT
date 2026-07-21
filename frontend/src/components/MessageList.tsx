@@ -65,7 +65,11 @@ export default function MessageList({ messages }: { messages: convoApi.MessageDT
 
     const last = filtered[lastAssistantIndex];
 
-    if (last.role === "assistant" && (!last.content || last.content.trim() === "")) {
+    if (
+      last.role === "assistant" &&
+      (!last.content || last.content.trim() === "") &&
+      (!last.thinking || last.thinking.trim() === "")
+    ) {
       const copy = [...filtered];
       copy[lastAssistantIndex] = { ...last, content: "__TYPING__" };
       return copy;

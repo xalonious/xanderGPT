@@ -3,6 +3,21 @@ import Button from "./Button";
 import Textarea from "./TextArea";
 
 type WebSearchMode = "auto" | "force";
+type ThinkingMode = "auto" | "force";
+
+function ThinkingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+      <path
+        d="M9 18h6M10 21h4M8.2 15.2A7 7 0 1 1 15.8 15.2C14.8 16 14.3 16.5 14 18h-4c-.3-1.5-.8-2-1.8-2.8Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function Composer({
   disabled,
@@ -12,11 +27,12 @@ export default function Composer({
 }: {
   disabled?: boolean;
   streaming: boolean;
-  onSend: (text: string, webSearch: WebSearchMode) => void;
+  onSend: (text: string, webSearch: WebSearchMode, thinking: ThinkingMode) => void;
   onStop: () => void;
 }) {
   const [text, setText] = useState("");
   const [forceWebSearch, setForceWebSearch] = useState(false);
+  const [forceThinking, setForceThinking] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const taRef = useRef<HTMLTextAreaElement | null>(null);
@@ -107,8 +123,14 @@ export default function Composer({
     const t = text.trim();
     if (!t) return;
 
-    onSend(t, forceWebSearch ? "force" : "auto");
+    onSend(
+      t,
+      forceWebSearch ? "force" : "auto",
+      forceThinking ? "force" : "auto"
+    );
     setText("");
+    setForceWebSearch(false);
+    setForceThinking(false);
     setMenuOpen(false);
 
     requestAnimationFrame(() => taRef.current?.focus());
@@ -154,6 +176,7 @@ export default function Composer({
                   <button
                     type="button"
                     onClick={() => setForceWebSearch((v) => !v)}
+                    aria-pressed={forceWebSearch}
                     className="w-full px-3 py-3 text-left hover:bg-white/5 transition"
                   >
                     <div className="flex items-center justify-between">
@@ -186,6 +209,44 @@ export default function Composer({
                     <div className="mt-1 text-[11px] text-zinc-400">
                       {forceWebSearch
                         ? "Always search for next message"
+                        : "Model decides automatically"}
+                    </div>
+                  </button>
+
+                  <div className="h-px bg-white/10" />
+
+                  <button
+                    type="button"
+                    onClick={() => setForceThinking((v) => !v)}
+                    aria-pressed={forceThinking}
+                    className="w-full px-3 py-3 text-left hover:bg-white/5 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-zinc-300"><ThinkingIcon /></span>
+                        <span className="text-sm text-zinc-100">Think harder</span>
+                      </div>
+
+                      <span
+                        className={[
+                          "inline-flex h-5 w-9 items-center rounded-full border transition",
+                          forceThinking
+                            ? "bg-white/15 border-white/20"
+                            : "bg-white/5 border-white/10",
+                        ].join(" ")}
+                      >
+                        <span
+                          className={[
+                            "inline-block h-4 w-4 rounded-full bg-white/80 shadow transition",
+                            forceThinking ? "translate-x-4" : "translate-x-1",
+                          ].join(" ")}
+                        />
+                      </span>
+                    </div>
+
+                    <div className="mt-1 text-[11px] text-zinc-400">
+                      {forceThinking
+                        ? "Use reasoning for next message"
                         : "Model decides automatically"}
                     </div>
                   </button>
@@ -225,6 +286,13 @@ export default function Composer({
             <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/60" />
               Web search enabled
+            </div>
+          )}
+
+          {forceThinking && (
+            <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-violet-300/80" />
+              Thinking enabled for next message
             </div>
           )}
         </div>

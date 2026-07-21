@@ -28,6 +28,8 @@ Brave Search API.
 - Automatic or user-forced Brave web search with query refinement and cited evidence
 - Direct extraction and summarization of linked web pages
 - Automatic calculator routing for mathematical expressions
+- Unified request planning for calculator, web-search, and thinking decisions
+- Optional streamed thinking traces with an automatic mode and a per-message force toggle
 - Markdown, GitHub-flavored tables, syntax-highlighted code, and links
 - LaTeX rendering through KaTeX
 - Responsive desktop and mobile chat interface
@@ -54,7 +56,7 @@ Before installing xanderGPT, make sure you have:
 - [Ollama](https://ollama.com/) installed and running
 - A [Brave Search API](https://brave.com/search/api/) key if you want web search
 
-The included model configuration is based on `qwen2.5:7b`. Running it locally
+The included model configuration is based on `qwen3:8b`. Running it locally
 requires enough memory for the model and its context.
 
 ## Setup
@@ -72,7 +74,7 @@ From the repository root, pull the base model and create the configured
 `xandergpt` model:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen3:8b
 ollama create xandergpt -f Modelfile
 ```
 
@@ -191,8 +193,10 @@ not be verified instead of treating the search as successful.
 ## How chat and tools work
 
 For each message, the backend loads recent conversation history, combines the
-application prompt with any conversation-specific instructions, and asks the
-local model which tools are relevant.
+application prompt with any conversation-specific instructions, and makes one
+unified planning call to decide whether calculator, web-search, and extended
+thinking capabilities are relevant. Forced controls in the tools menu override
+the automatic web-search and thinking decisions for the next message.
 
 - **Web search:** The model can search automatically when a prompt needs current
   information, while the tools menu can force search for the next message. The
@@ -206,6 +210,10 @@ local model which tools are relevant.
   network addresses are blocked.
 - **Calculator:** Mathematical prompts can be routed through Math.js so the
   answer uses an evaluated result rather than model arithmetic.
+- **Thinking:** Complex reasoning, planning, code, and comparison prompts can
+  enable Qwen's thinking mode. Thinking tokens stream separately from the final
+  answer and appear in a collapsible panel. Historical thinking traces are not
+  sent back to the model as conversation context.
 - **Temporary chat:** Messages and the temporary system prompt remain in the
   browser session and are sent as short-lived request context, without creating
   conversation or message records in MySQL.
@@ -235,7 +243,7 @@ All routes are prefixed with `/api`. Conversation routes require a valid
 | `POST` | `/conversations/:id/messages/stream` | Send a message as an NDJSON stream |
 | `POST` | `/conversations/temp/stream` | Stream a temporary, non-persistent chat |
 
-The streaming endpoints can emit `token`, `tool`, `tool_result`, `title`,
+The streaming endpoints can emit `thinking`, `token`, `tool`, `tool_result`, `title`,
 `done`, and `error` events. Closing or cancelling the request aborts generation
 on the server.
 

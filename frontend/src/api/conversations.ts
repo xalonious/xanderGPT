@@ -21,6 +21,8 @@ export type MessageDTO = {
   conversationId: string;
   role: MessageRole;
   content: string;
+  thinking: string | null;
+  thinkingDurationMs: number | null;
   sources: WebSource[] | null;
   createdAt: string;
 };

@@ -18,6 +18,7 @@ export const sendMessageSchema = {
   body: Joi.object({
     content: Joi.string().min(1).max(20000).required(),
     webSearch: Joi.string().valid("auto", "force", "off").optional().default("auto"),
+    thinking: Joi.string().valid("auto", "force", "off").optional().default("auto"),
   }),
 };
 
@@ -26,6 +27,7 @@ export const sendTempMessageSchema = {
     content: Joi.string().min(1).max(20000).required(),
     systemPrompt: Joi.string().allow("").max(4000).optional(),
     webSearch: Joi.string().valid("auto", "force", "off").optional().default("auto"),
+    thinking: Joi.string().valid("auto", "force", "off").optional().default("auto"),
     history: Joi.array()
       .items(
         Joi.object({

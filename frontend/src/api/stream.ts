@@ -1,4 +1,5 @@
 type StreamEvent =
+  | { type: "thinking"; token: string }
   | { type: "token"; token: string }
   | { type: "title"; title: string }
   | { type: "tool"; tool: "web_search"; query: string }
@@ -28,7 +29,7 @@ type StreamEvent =
       contentType?: string;
       excerpt?: string;
     }
-  | { type: "done" }
+  | { type: "done"; thinkingDurationMs?: number | null }
   | { type: "error"; message: string };
 
 function getApiUrl() {
@@ -83,21 +84,35 @@ export async function sendMessageStream(opts: {
   conversationId: string;
   content: string;
   webSearch?: "auto" | "force" | "off";
+  thinking?: "auto" | "force" | "off";
   signal?: AbortSignal;
 
   onToken: (token: string) => void;
+  onThinking?: (token: string) => void;
+  onDone?: (thinkingDurationMs: number | null) => void;
   onTitle?: (title: string) => void;
 
   onTool?: (evt: Extract<StreamEvent, { type: "tool" | "tool_result" }>) => void;
 }) {
-  const { conversationId, content, webSearch = "auto", signal, onToken, onTitle, onTool } = opts;
+  const {
+    conversationId,
+    content,
+    webSearch = "auto",
+    thinking = "auto",
+    signal,
+    onToken,
+    onThinking,
+    onDone,
+    onTitle,
+    onTool,
+  } = opts;
 
   const res = await fetch(`${getApiUrl()}/conversations/${conversationId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     signal,
-    body: JSON.stringify({ content, webSearch }),
+    body: JSON.stringify({ content, webSearch, thinking }),
   });
 
   if (!res.ok) {
@@ -106,7 +121,9 @@ export async function sendMessageStream(opts: {
   }
 
   for await (const evt of ndjsonStream(res)) {
-    if (evt.type === "token") {
+    if (evt.type === "thinking") {
+      onThinking?.(evt.token);
+    } else if (evt.type === "token") {
       onToken(evt.token);
     } else if (evt.type === "title") {
       onTitle?.(evt.title);
@@ -115,6 +132,7 @@ export async function sendMessageStream(opts: {
     } else if (evt.type === "error") {
       throw new Error(evt.message || "Stream error");
     } else if (evt.type === "done") {
+      onDone?.(evt.thinkingDurationMs ?? null);
       return;
     }
   }
@@ -125,9 +143,12 @@ export async function sendTemporaryMessageStream(opts: {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   systemPrompt?: string;
   webSearch?: "auto" | "force" | "off";
+  thinking?: "auto" | "force" | "off";
   signal?: AbortSignal;
 
   onToken: (token: string) => void;
+  onThinking?: (token: string) => void;
+  onDone?: (thinkingDurationMs: number | null) => void;
   onTool?: (evt: Extract<StreamEvent, { type: "tool" | "tool_result" }>) => void;
 }) {
   const {
@@ -135,8 +156,11 @@ export async function sendTemporaryMessageStream(opts: {
     history,
     systemPrompt = "",
     webSearch = "auto",
+    thinking = "auto",
     signal,
     onToken,
+    onThinking,
+    onDone,
     onTool,
   } = opts;
 
@@ -150,6 +174,7 @@ export async function sendTemporaryMessageStream(opts: {
       history,
       systemPrompt,
       webSearch,
+      thinking,
     }),
   });
 
@@ -159,13 +184,16 @@ export async function sendTemporaryMessageStream(opts: {
   }
 
   for await (const evt of ndjsonStream(res)) {
-    if (evt.type === "token") {
+    if (evt.type === "thinking") {
+      onThinking?.(evt.token);
+    } else if (evt.type === "token") {
       onToken(evt.token);
     } else if (evt.type === "tool" || evt.type === "tool_result") {
       onTool?.(evt);
     } else if (evt.type === "error") {
       throw new Error(evt.message || "Stream error");
     } else if (evt.type === "done") {
+      onDone?.(evt.thinkingDurationMs ?? null);
       return;
     }
   }

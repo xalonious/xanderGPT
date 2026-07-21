@@ -1,8 +1,13 @@
 import { ollamaChat, type OllamaMessage } from "./ollamaService";
 
-export type WebSearchDecision =
-  | { useWeb: false; query: null; reason: string }
-  | { useWeb: true; query: string; reason: string };
+export type RequestPlan = {
+  useWeb: boolean;
+  query: string | null;
+  useCalculator: boolean;
+  expression: string | null;
+  useThinking: boolean;
+  reason: string;
+};
 
 export type MoreResultsDecision =
   | {
@@ -19,10 +24,6 @@ export type MoreResultsDecision =
       candidateIndexes: number[];
       reason: string;
     };
-
-export type CalculatorDecision =
-  | { useCalc: false; expression: null; reason: string }
-  | { useCalc: true; expression: string; reason: string };
 
 export function extractFirstUrl(text: string): string | null {
   const match = text.match(/\bhttps?:\/\/[^\s<>()"']+/i);
@@ -118,27 +119,45 @@ function fallbackSearchQuery(recentHistory: OllamaMessage[], userText: string): 
   return cleanSearchQuery(contextualFallback, userText);
 }
 
-async function planWebSearch(
+export async function planRequest(
   recentHistory: OllamaMessage[],
   userText: string,
   opts: {
-    requireSearch: boolean;
-    requirementReason?: string;
+    allowWeb: boolean;
+    requireWeb: boolean;
+    allowCalculator: boolean;
+    allowThinking: boolean;
+    requireThinking: boolean;
     signal?: AbortSignal;
   }
-): Promise<WebSearchDecision> {
-  const forceInstruction = opts.requireSearch
-    ? `${opts.requirementReason ?? "Web search is required."} Therefore use_web MUST be true.`
-    : "Decide whether web search is needed.";
-
+): Promise<RequestPlan> {
   const fallbackQuery = fallbackSearchQuery(recentHistory, userText);
+
+  const constraints = [
+    opts.allowWeb
+      ? opts.requireWeb
+        ? "Web search is required, so use_web MUST be true."
+        : "Web search is available when it materially improves the answer."
+      : "Web search is disabled, so use_web MUST be false and query MUST be null.",
+    opts.allowCalculator
+      ? "The calculator is available for a concrete numeric expression."
+      : "The calculator is disabled, so use_calculator MUST be false and expression MUST be null.",
+    opts.allowThinking
+      ? opts.requireThinking
+        ? "Thinking is required, so use_thinking MUST be true."
+        : "Thinking is available for genuinely complex reasoning."
+      : "Thinking is disabled, so use_thinking MUST be false.",
+  ].join("\n");
 
   const prompt: OllamaMessage[] = [
     {
       role: "system",
-      content: `You are a web-search planner.
+      content: `You are the routing planner for a local AI assistant.
 
-${forceInstruction}
+Make one combined decision about web search, calculator use, and whether the final answer should use extended thinking.
+
+Request constraints:
+${constraints}
 
 Use web search when:
 - The user asks for up-to-date information such as news, prices, availability, schedules, or current events
@@ -151,14 +170,35 @@ Do NOT use web search when:
 - The user wants brainstorming, writing, opinions, or a timeless general explanation
 - The user asks for code help that does not depend on current documentation or facts
 
+Use the calculator when:
+- The user asks for a numeric result, arithmetic, algebraic evaluation, or a precise computation
+- A safe single-line expression can be constructed from values already present in the request
+
+Do NOT use the calculator when:
+- The request is primarily factual, explanatory, or symbolic
+- Required numeric inputs would first need to come from web search
+
+Use thinking when:
+- The final answer requires multi-step reasoning, non-trivial code debugging, planning, architecture, proof, or trade-off analysis
+- Several constraints or sources must be reconciled
+- An immediate plausible answer would have a meaningful risk of being wrong
+
+Do NOT use thinking when:
+- The request is casual conversation, simple recall, rewriting, translation, or straightforward summarization
+- A calculator result directly answers the question
+- The response is a short acknowledgement
+
 Return ONLY valid JSON matching this schema:
 {
   "use_web": true|false,
   "query": string|null,
+  "use_calculator": true|false,
+  "expression": string|null,
+  "use_thinking": true|false,
   "reason": string
 }
 
-Query rules:
+Rules:
 - Write a focused query of roughly 3-12 words
 - Preserve important names, versions, dates, and locations
 - Do not include quotation marks or conversational filler
@@ -166,7 +206,10 @@ Query rules:
 - Use previous messages only to understand what the user is referring to; do not assume previous assistant claims are current or correct
 - If the request contains several ideas, search for the one needed to answer the user's actual question
 - Example: after "who was the first US president?", the follow-up "and who's the current one?" should produce a query like "current US president"
-- If use_web is false, query must be null.`
+- If use_web is false, query must be null
+- If use_calculator is true, expression must be one safe, single-line math expression without assignments or prose
+- If use_calculator is false, expression must be null
+- Web search, calculator use, and thinking are independent decisions and may be combined.`
     },
     ...recentHistory.slice(-6),
     { role: "user", content: userText }
@@ -178,63 +221,40 @@ Query rules:
       temperature: 0,
       top_p: 0.9,
       repeat_penalty: 1.05,
-      num_predict: 180
+      num_predict: 220
     },
     opts.signal
   );
 
   const parsed = extractJsonObject(raw);
 
-  if (!parsed || typeof parsed.use_web !== "boolean") {
-    if (opts.requireSearch) {
-      return {
-        useWeb: true,
-        query: fallbackQuery,
-        reason: "Search was required and query planning failed"
-      };
-    }
-    return { useWeb: false, query: null, reason: "Router JSON parse failed" };
+  if (!parsed) {
+    return {
+      useWeb: opts.allowWeb && opts.requireWeb,
+      query: opts.allowWeb && opts.requireWeb ? fallbackQuery : null,
+      useCalculator: false,
+      expression: null,
+      useThinking: opts.allowThinking && opts.requireThinking,
+      reason: "Planner JSON parse failed",
+    };
   }
 
   const reason = String(parsed.reason ?? "").trim() || "No reason provided";
 
-  if (opts.requireSearch || parsed.use_web) {
-    return {
-      useWeb: true,
-      query: cleanSearchQuery(parsed.query, fallbackQuery),
-      reason
-    };
-  }
+  const useWeb = opts.allowWeb && (opts.requireWeb || parsed.use_web === true);
+  const rawExpression = String(parsed.expression ?? "").trim();
+  const useCalculator =
+    opts.allowCalculator && parsed.use_calculator === true && rawExpression.length > 0;
 
-  return { useWeb: false, query: null, reason };
-}
-
-export async function decideWebSearch(
-  recentHistory: OllamaMessage[],
-  userText: string,
-  signal?: AbortSignal
-): Promise<WebSearchDecision> {
-  const freshnessRequired = hasStrongWebSearchCue(userText);
-
-  return planWebSearch(recentHistory, userText, {
-    requireSearch: freshnessRequired,
-    requirementReason: freshnessRequired
-      ? "The request contains a strong freshness cue, so it must be verified with web search."
-      : undefined,
-    signal
-  });
-}
-
-export async function planForcedWebSearch(
-  recentHistory: OllamaMessage[],
-  userText: string,
-  signal?: AbortSignal
-): Promise<WebSearchDecision> {
-  return planWebSearch(recentHistory, userText, {
-    requireSearch: true,
-    requirementReason: "The user explicitly enabled web search.",
-    signal
-  });
+  return {
+    useWeb,
+    query: useWeb ? cleanSearchQuery(parsed.query, fallbackQuery) : null,
+    useCalculator,
+    expression: useCalculator ? rawExpression.slice(0, 240) : null,
+    useThinking:
+      opts.allowThinking && (opts.requireThinking || parsed.use_thinking === true),
+    reason,
+  };
 }
 
 export async function decideMoreWebResults(
@@ -343,66 +363,4 @@ Rules:
     candidateIndexes,
     reason
   };
-}
-
-export async function decideCalculator(
-  recentHistory: OllamaMessage[],
-  userText: string,
-  signal?: AbortSignal
-): Promise<CalculatorDecision> {
-  const prompt: OllamaMessage[] = [
-    {
-      role: "system",
-      content: `You are a routing component that decides if a calculator tool should be used.
-
-Use the calculator when:
-- The user asks for a numeric result, arithmetic, algebraic evaluation, or a precise computation
-- The user asks to calculate, compute, or evaluate something
-
-Do NOT use the calculator when:
-- The user asks for general explanations, proofs, or symbolic reasoning without a final numeric evaluation
-- The question is primarily about facts, news, policies, or requires web search
-
-Return ONLY valid JSON exactly matching this schema:
-{
-  "use_calc": true|false,
-  "expression": string|null,
-  "reason": string
-}
-
-Rules:
-- If use_calc is true, expression MUST be a single-line math expression the calculator can evaluate
-- The expression must not include equals signs, variable assignments, or words other than function names
-- If use_calc is false, expression must be null.`
-    },
-    ...recentHistory.slice(-6),
-    { role: "user", content: userText }
-  ];
-
-  const raw = await ollamaChat(
-    prompt,
-    {
-      temperature: 0,
-      top_p: 0.9,
-      repeat_penalty: 1.05,
-      num_predict: 140
-    },
-    signal
-  );
-
-  const parsed = extractJsonObject(raw);
-
-  if (!parsed || typeof parsed.use_calc !== "boolean") {
-    return { useCalc: false, expression: null, reason: "Calculator router JSON parse failed" };
-  }
-
-  const reason = String(parsed.reason ?? "").trim() || "No reason provided";
-
-  if (parsed.use_calc) {
-    const expression = String(parsed.expression ?? "").trim();
-    if (!expression) return { useCalc: false, expression: null, reason };
-    return { useCalc: true, expression, reason };
-  }
-
-  return { useCalc: false, expression: null, reason };
 }

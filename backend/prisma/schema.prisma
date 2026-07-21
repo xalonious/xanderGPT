@@ -42,6 +42,8 @@ model Message {
   id        String      @id @default(cuid())
   role      MessageRole
   content   String      @db.LongText
+  thinking  String?     @db.LongText
+  thinkingDurationMs Int?
   sources   Json?
   createdAt DateTime @default(now())
 

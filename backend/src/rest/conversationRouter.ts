@@ -72,6 +72,7 @@ router.post(
     };
 
     const webSearchMode = (req.body.webSearch ?? "auto") as "auto" | "force" | "off";
+    const thinkingMode = (req.body.thinking ?? "auto") as "auto" | "force" | "off";
 
     try {
       const result = await convoService.sendTemporaryMessageStream(
@@ -80,7 +81,9 @@ router.post(
         req.body.systemPrompt ?? "",
         {
           onToken: (token) => safeWriteLine({ type: "token", token }),
+          onThinking: (token) => safeWriteLine({ type: "thinking", token }),
           webSearchMode,
+          thinkingMode,
           onToolEvent: (evt) => safeWriteLine(evt),
           signal: ac.signal,
         }
@@ -94,7 +97,10 @@ router.post(
         return;
       }
 
-      safeWriteLine({ type: "done" });
+      safeWriteLine({
+        type: "done",
+        thinkingDurationMs: result.thinkingDurationMs,
+      });
       res.end();
     } catch (err: any) {
       if (clientGone || ac.signal.aborted || isAbortError(err)) {
@@ -195,6 +201,7 @@ router.post(
     };
 
     const webSearchMode = (req.body.webSearch ?? "auto") as "auto" | "force" | "off";
+    const thinkingMode = (req.body.thinking ?? "auto") as "auto" | "force" | "off";
 
     try {
       const result = await convoService.sendMessageStream(
@@ -203,7 +210,9 @@ router.post(
         req.body.content,
         {
           onToken: (token) => safeWriteLine({ type: "token", token }),
+          onThinking: (token) => safeWriteLine({ type: "thinking", token }),
           webSearchMode,
+          thinkingMode,
           onToolEvent: (evt) => safeWriteLine(evt),
           signal: ac.signal,
         }
@@ -221,7 +230,10 @@ router.post(
         safeWriteLine({ type: "title", title: result.titleUpdated });
       }
 
-      safeWriteLine({ type: "done" });
+      safeWriteLine({
+        type: "done",
+        thinkingDurationMs: result.assistantMessage?.thinkingDurationMs ?? null,
+      });
       res.end();
     } catch (err: any) {
       if (clientGone || ac.signal.aborted || isAbortError(err)) {

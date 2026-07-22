@@ -26,6 +26,8 @@ export const sendTempMessageSchema = {
   body: Joi.object({
     content: Joi.string().min(1).max(20000).required(),
     systemPrompt: Joi.string().allow("").max(4000).optional(),
+    contextSummary: Joi.string().allow("", null).max(12000).optional(),
+    compactedMessageCount: Joi.number().integer().min(0).max(100000).optional().default(0),
     webSearch: Joi.string().valid("auto", "force", "off").optional().default("auto"),
     thinking: Joi.string().valid("auto", "force", "off").optional().default("auto"),
     history: Joi.array()
@@ -35,7 +37,7 @@ export const sendTempMessageSchema = {
           content: Joi.string().min(1).max(20000).required(),
         })
       )
-      .max(30)
+      .max(1000)
       .default([]),
   }),
 };

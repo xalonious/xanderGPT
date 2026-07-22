@@ -10,14 +10,30 @@ import {
 import { fetchAndExtractUrl } from "./urlFetchService";
 import { evaluateExpression } from "./calculatorService";
 import { retrieveWebEvidence } from "./webRetrievalService";
-
-const HISTORY_MESSAGE_LIMIT = 30;
+import {
+  buildSummarySystemMessage,
+  createRollingSummary,
+  parseStoredSummary,
+  serializeStoredSummary,
+  shouldCompactContext,
+  splitMessagesForCompaction,
+  type CompactableMessage,
+  type StoredContextSummary,
+} from "./contextCompactionService";
 
 const URL_TOOL_MAX_CHARS = 18_000;
 const URL_TOOL_EXCERPT_CHARS = 280;
 
 type WebSearchMode = "auto" | "force" | "off";
 type ThinkingMode = "auto" | "force" | "off";
+
+type CompactionEvent =
+  | { status: "start" }
+  | {
+      status: "complete";
+      summary: string;
+      compactedMessageCount: number;
+    };
 
 type StreamResult = {
   assistantText: string;
@@ -99,41 +115,163 @@ function composeSystem(baseSystem: string, prefs: string | null | undefined) {
   );
 }
 
-async function loadHistoryCapped(conversationId: string): Promise<OllamaMessage[]> {
-  const convo = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    select: { systemPrompt: true },
-  });
+async function preparePersistentHistory(
+  conversationId: string,
+  nextUserMessage: string,
+  opts?: {
+    signal?: AbortSignal;
+    onCompaction?: (event: CompactionEvent) => void;
+  }
+): Promise<OllamaMessage[]> {
+  const [convo, storedMessages] = await Promise.all([
+    prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { systemPrompt: true },
+    }),
+    prisma.message.findMany({
+      where: { conversationId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, role: true, content: true },
+    }),
+  ]);
 
-  const system = await prisma.message.findFirst({
-    where: { conversationId, role: "system" },
-    orderBy: { createdAt: "asc" },
-    select: { content: true },
-  });
+  let storedBaseSystem: string | null = null;
+  let latestSummary: StoredContextSummary | null = null;
 
-  const historyDesc = await prisma.message.findMany({
-    where: { conversationId, role: { in: ["user", "assistant"] } },
-    orderBy: { createdAt: "desc" },
-    take: HISTORY_MESSAGE_LIMIT,
-    select: { role: true, content: true },
-  });
+  for (const message of storedMessages) {
+    if (message.role !== "system") continue;
+    const parsedSummary = parseStoredSummary(message.content);
+    if (parsedSummary) {
+      latestSummary = parsedSummary;
+    } else if (storedBaseSystem === null) {
+      storedBaseSystem = message.content;
+    }
+  }
 
-  const historyAsc = historyDesc.reverse();
+  const dialogue = storedMessages
+    .filter(
+      (message): message is typeof message & { role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant"
+    )
+    .map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+    }));
 
-  const baseSystem = system?.content ?? BASE_SYSTEM_FALLBACK;
+  let compactedMessageCount = 0;
+  if (latestSummary) {
+    const throughIndex = dialogue.findIndex(
+      (message) => message.id === latestSummary?.throughMessageId
+    );
+    if (throughIndex >= 0) {
+      compactedMessageCount = throughIndex + 1;
+    } else {
+      latestSummary = null;
+    }
+  }
 
-  const messages: OllamaMessage[] = [
-    {
-      role: "system",
-      content: composeSystem(baseSystem, convo?.systemPrompt),
-    },
-    ...historyAsc.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
+  const uncompacted = dialogue.slice(compactedMessageCount);
+  const systemMessage: OllamaMessage = {
+    role: "system",
+    content: composeSystem(storedBaseSystem ?? BASE_SYSTEM_FALLBACK, convo?.systemPrompt),
+  };
+
+  const buildHistory = (
+    summary: string | null,
+    messages: CompactableMessage[]
+  ): OllamaMessage[] => [
+    systemMessage,
+    ...(summary ? [buildSummarySystemMessage(summary)] : []),
+    ...messages,
   ];
 
-  return messages;
+  const currentHistory = buildHistory(latestSummary?.summary ?? null, uncompacted);
+  if (!shouldCompactContext(currentHistory, nextUserMessage)) return currentHistory;
+
+  const { compactable, recent } = splitMessagesForCompaction(uncompacted);
+  if (compactable.length === 0) return currentHistory;
+
+  opts?.onCompaction?.({ status: "start" });
+  const summary = await createRollingSummary(
+    latestSummary?.summary ?? null,
+    compactable,
+    opts?.signal
+  );
+
+  if (opts?.signal?.aborted) {
+    const error: any = new Error("Aborted");
+    error.name = "AbortError";
+    throw error;
+  }
+
+  const lastCompactedMessage = uncompacted[compactable.length - 1];
+  await prisma.message.create({
+    data: {
+      conversationId,
+      role: "system",
+      content: serializeStoredSummary({
+        version: 1,
+        throughMessageId: lastCompactedMessage.id,
+        summary,
+      }),
+    },
+    select: { id: true },
+  });
+
+  compactedMessageCount += compactable.length;
+  opts?.onCompaction?.({
+    status: "complete",
+    summary,
+    compactedMessageCount,
+  });
+
+  return buildHistory(summary, recent);
+}
+
+async function prepareTemporaryHistory(
+  history: CompactableMessage[],
+  systemPrompt: string,
+  nextUserMessage: string,
+  opts: {
+    previousSummary?: string | null;
+    compactedMessageCount?: number;
+    signal?: AbortSignal;
+    onCompaction?: (event: CompactionEvent) => void;
+  }
+): Promise<OllamaMessage[]> {
+  const systemMessage: OllamaMessage = {
+    role: "system",
+    content: composeSystem(BASE_SYSTEM_FALLBACK, systemPrompt),
+  };
+
+  const buildHistory = (
+    summary: string | null,
+    messages: CompactableMessage[]
+  ): OllamaMessage[] => [
+    systemMessage,
+    ...(summary ? [buildSummarySystemMessage(summary)] : []),
+    ...messages,
+  ];
+
+  const previousSummary = opts.previousSummary?.trim() || null;
+  const currentHistory = buildHistory(previousSummary, history);
+  if (!shouldCompactContext(currentHistory, nextUserMessage)) return currentHistory;
+
+  const { compactable, recent } = splitMessagesForCompaction(history);
+  if (compactable.length === 0) return currentHistory;
+
+  opts.onCompaction?.({ status: "start" });
+  const summary = await createRollingSummary(previousSummary, compactable, opts.signal);
+  const compactedMessageCount = (opts.compactedMessageCount ?? 0) + compactable.length;
+
+  opts.onCompaction?.({
+    status: "complete",
+    summary,
+    compactedMessageCount,
+  });
+
+  return buildHistory(summary, recent);
 }
 
 function looksUntitled(title: string | null) {
@@ -563,8 +701,8 @@ export async function getConversationMessages(userId: string, conversationId: st
   await ensureOwnership(userId, conversationId);
 
   return prisma.message.findMany({
-    where: { conversationId },
-    orderBy: { createdAt: "asc" },
+    where: { conversationId, role: { in: ["user", "assistant"] } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       conversationId: true,
@@ -582,30 +720,37 @@ export async function sendMessageNonStream(userId: string, conversationId: strin
   await ensureOwnership(userId, conversationId);
   const trimmed = assertNonEmpty(content);
 
-  await prisma.message.create({
-    data: { conversationId, role: "user", content: trimmed },
-  });
+  const history = await preparePersistentHistory(conversationId, trimmed);
+  const assistantText = await ollamaChat([...history, { role: "user", content: trimmed }]);
 
-  const history = await loadHistoryCapped(conversationId);
-  const assistantText = await ollamaChat(history);
+  const now = new Date();
+  const assistantMessage = await prisma.$transaction(async (tx) => {
+    await tx.message.create({
+      data: { conversationId, role: "user", content: trimmed },
+      select: { id: true },
+    });
 
-  const assistantMessage = await prisma.message.create({
-    data: { conversationId, role: "assistant", content: assistantText },
-    select: {
-      id: true,
-      conversationId: true,
-      role: true,
-      content: true,
-      thinking: true,
-      thinkingDurationMs: true,
-      sources: true,
-      createdAt: true,
-    },
-  });
+    const assistant = await tx.message.create({
+      data: { conversationId, role: "assistant", content: assistantText },
+      select: {
+        id: true,
+        conversationId: true,
+        role: true,
+        content: true,
+        thinking: true,
+        thinkingDurationMs: true,
+        sources: true,
+        createdAt: true,
+      },
+    });
 
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { updatedAt: new Date() },
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: { updatedAt: now },
+      select: { id: true },
+    });
+
+    return assistant;
   });
 
   await maybeAutoTitleConversation(conversationId, trimmed);
@@ -626,6 +771,7 @@ export async function sendMessageStream(
         webSearchMode?: WebSearchMode;
         thinkingMode?: ThinkingMode;
         onToolEvent?: (evt: ToolEvent) => void;
+        onCompaction?: (event: CompactionEvent) => void;
       },
   maybeSignal?: AbortSignal
 ): Promise<{
@@ -648,6 +794,8 @@ export async function sendMessageStream(
   const onThinking = typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onThinking;
 
   const onToolEvent = typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onToolEvent;
+  const onCompaction =
+    typeof onTokenOrOpts === "function" ? undefined : onTokenOrOpts.onCompaction;
   let webSources: BraveWebResult[] = [];
 
   const handleToolEvent = (evt: ToolEvent) => {
@@ -661,7 +809,10 @@ export async function sendMessageStream(
     return { assistantMessage: null, titleUpdated: null, aborted: true };
   }
 
-  const history = await loadHistoryCapped(conversationId);
+  const history = await preparePersistentHistory(conversationId, trimmed, {
+    signal,
+    onCompaction,
+  });
 
   const streamResult = await runStreamWithHistory(history, trimmed, {
     onToken,
@@ -729,24 +880,30 @@ export async function sendTemporaryMessageStream(
     webSearchMode?: WebSearchMode;
     thinkingMode?: ThinkingMode;
     onToolEvent?: (evt: ToolEvent) => void;
+    previousSummary?: string | null;
+    compactedMessageCount?: number;
+    onCompaction?: (event: CompactionEvent) => void;
   }
 ): Promise<StreamResult> {
   const trimmed = assertNonEmpty(content);
 
-  const cappedHistory = history
+  const validHistory = history
     .filter(
       (m): m is { role: "user" | "assistant"; content: string } =>
         (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
-    )
-    .slice(-HISTORY_MESSAGE_LIMIT);
+    );
 
-  const composedHistory: OllamaMessage[] = [
+  const composedHistory = await prepareTemporaryHistory(
+    validHistory,
+    systemPrompt,
+    trimmed,
     {
-      role: "system",
-      content: composeSystem(BASE_SYSTEM_FALLBACK, systemPrompt),
-    },
-    ...cappedHistory,
-  ];
+      previousSummary: opts.previousSummary,
+      compactedMessageCount: opts.compactedMessageCount,
+      signal: opts.signal,
+      onCompaction: opts.onCompaction,
+    }
+  );
 
   return runStreamWithHistory(composedHistory, trimmed, {
     onToken: opts.onToken,

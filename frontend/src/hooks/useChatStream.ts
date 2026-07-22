@@ -64,6 +64,8 @@ export function useChatStream(opts: {
   const lastThinkingRef = useRef("");
   const thinkingStartedAtRef = useRef<number | null>(null);
   const lastThinkingDurationMsRef = useRef<number | null>(null);
+  const temporaryContextSummaryRef = useRef<string | null>(null);
+  const temporaryCompactedMessageCountRef = useRef(0);
 
   const finishThinking = useCallback(
     (assistantId: string, serverDurationMs?: number | null) => {
@@ -169,6 +171,16 @@ export function useChatStream(opts: {
           webSearch,
           thinking,
           signal: ctrl.signal,
+
+          onCompaction: (event) => {
+            if (hasReceivedTokenRef.current || hasReceivedThinkingRef.current) return;
+
+            onAssistantReplace({
+              ...assistantMsg,
+              content: event.status === "start" ? "__COMPACTING__" : "",
+              thinking: null,
+            });
+          },
 
           onThinking: (token) => {
             if (thinkingStartedAtRef.current === null) {
@@ -299,6 +311,18 @@ export function useChatStream(opts: {
       const activeId = TEMP_CONVERSATION_ID;
       lastConversationIdRef.current = activeId;
 
+      if (
+        history.length === 0 ||
+        temporaryCompactedMessageCountRef.current > history.length
+      ) {
+        temporaryContextSummaryRef.current = null;
+        temporaryCompactedMessageCountRef.current = 0;
+      }
+
+      const uncompactedHistory = history.slice(
+        temporaryCompactedMessageCountRef.current
+      );
+
       setStreaming(true);
 
       const ctrl = new AbortController();
@@ -347,11 +371,32 @@ export function useChatStream(opts: {
       try {
         await sendTemporaryMessageStream({
           content,
-          history,
+          history: uncompactedHistory,
           systemPrompt,
+          contextSummary: temporaryContextSummaryRef.current,
+          compactedMessageCount: temporaryCompactedMessageCountRef.current,
           webSearch,
           thinking,
           signal: ctrl.signal,
+
+          onCompaction: (event) => {
+            if (event.status === "complete") {
+              if (typeof event.summary === "string" && event.summary.trim()) {
+                temporaryContextSummaryRef.current = event.summary;
+              }
+              if (typeof event.compactedMessageCount === "number") {
+                temporaryCompactedMessageCountRef.current = event.compactedMessageCount;
+              }
+            }
+
+            if (hasReceivedTokenRef.current || hasReceivedThinkingRef.current) return;
+
+            onAssistantReplace({
+              ...assistantMsg,
+              content: event.status === "start" ? "__COMPACTING__" : "",
+              thinking: null,
+            });
+          },
 
           onThinking: (token) => {
             if (thinkingStartedAtRef.current === null) {

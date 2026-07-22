@@ -132,6 +132,14 @@ export async function planRequest(
   }
 ): Promise<RequestPlan> {
   const fallbackQuery = fallbackSearchQuery(recentHistory, userText);
+  const compactedContext = recentHistory.find(
+    (message) =>
+      message.role === "system" &&
+      message.content.startsWith("Earlier conversation turns were compacted")
+  );
+  const recentDialogue = recentHistory
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .slice(-6);
 
   const constraints = [
     opts.allowWeb
@@ -211,7 +219,8 @@ Rules:
 - If use_calculator is false, expression must be null
 - Web search, calculator use, and thinking are independent decisions and may be combined.`
     },
-    ...recentHistory.slice(-6),
+    ...(compactedContext ? [compactedContext] : []),
+    ...recentDialogue,
     { role: "user", content: userText }
   ];
 

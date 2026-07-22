@@ -30,6 +30,7 @@ Brave Search API.
 - Automatic calculator routing for mathematical expressions
 - Unified request planning for calculator, web-search, and thinking decisions
 - Optional streamed thinking traces with an automatic mode and a per-message force toggle
+- Automatic rolling context compaction for long-running saved and temporary chats
 - Markdown, GitHub-flavored tables, syntax-highlighted code, and links
 - LaTeX rendering through KaTeX
 - Responsive desktop and mobile chat interface
@@ -214,6 +215,12 @@ the automatic web-search and thinking decisions for the next message.
   enable Qwen's thinking mode. Thinking tokens stream separately from the final
   answer and appear in a collapsible panel. Historical thinking traces are not
   sent back to the model as conversation context.
+- **Context compaction:** When the next message would push conversation context
+  near the configured model limit, older complete turns are merged into a
+  structured rolling summary before planning and generation continue. Recent
+  turns remain verbatim, original saved messages stay in MySQL, and the UI shows
+  a compaction status while the summary is prepared. Temporary chats keep the
+  same rolling state only in browser memory.
 - **Temporary chat:** Messages and the temporary system prompt remain in the
   browser session and are sent as short-lived request context, without creating
   conversation or message records in MySQL.
@@ -243,9 +250,9 @@ All routes are prefixed with `/api`. Conversation routes require a valid
 | `POST` | `/conversations/:id/messages/stream` | Send a message as an NDJSON stream |
 | `POST` | `/conversations/temp/stream` | Stream a temporary, non-persistent chat |
 
-The streaming endpoints can emit `thinking`, `token`, `tool`, `tool_result`, `title`,
-`done`, and `error` events. Closing or cancelling the request aborts generation
-on the server.
+The streaming endpoints can emit `compaction`, `thinking`, `token`, `tool`,
+`tool_result`, `title`, `done`, and `error` events. Closing or cancelling the
+request aborts compaction, tool use, or generation on the server.
 
 ## Project structure
 

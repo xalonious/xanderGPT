@@ -1,4 +1,14 @@
+export type CompactionEvent =
+  | { type: "compaction"; status: "start" }
+  | {
+      type: "compaction";
+      status: "complete";
+      summary?: string;
+      compactedMessageCount?: number;
+    };
+
 type StreamEvent =
+  | CompactionEvent
   | { type: "thinking"; token: string }
   | { type: "token"; token: string }
   | { type: "title"; title: string }
@@ -89,6 +99,7 @@ export async function sendMessageStream(opts: {
 
   onToken: (token: string) => void;
   onThinking?: (token: string) => void;
+  onCompaction?: (event: CompactionEvent) => void;
   onDone?: (thinkingDurationMs: number | null) => void;
   onTitle?: (title: string) => void;
 
@@ -102,6 +113,7 @@ export async function sendMessageStream(opts: {
     signal,
     onToken,
     onThinking,
+    onCompaction,
     onDone,
     onTitle,
     onTool,
@@ -123,6 +135,8 @@ export async function sendMessageStream(opts: {
   for await (const evt of ndjsonStream(res)) {
     if (evt.type === "thinking") {
       onThinking?.(evt.token);
+    } else if (evt.type === "compaction") {
+      onCompaction?.(evt);
     } else if (evt.type === "token") {
       onToken(evt.token);
     } else if (evt.type === "title") {
@@ -142,12 +156,15 @@ export async function sendTemporaryMessageStream(opts: {
   content: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   systemPrompt?: string;
+  contextSummary?: string | null;
+  compactedMessageCount?: number;
   webSearch?: "auto" | "force" | "off";
   thinking?: "auto" | "force" | "off";
   signal?: AbortSignal;
 
   onToken: (token: string) => void;
   onThinking?: (token: string) => void;
+  onCompaction?: (event: CompactionEvent) => void;
   onDone?: (thinkingDurationMs: number | null) => void;
   onTool?: (evt: Extract<StreamEvent, { type: "tool" | "tool_result" }>) => void;
 }) {
@@ -155,11 +172,14 @@ export async function sendTemporaryMessageStream(opts: {
     content,
     history,
     systemPrompt = "",
+    contextSummary = null,
+    compactedMessageCount = 0,
     webSearch = "auto",
     thinking = "auto",
     signal,
     onToken,
     onThinking,
+    onCompaction,
     onDone,
     onTool,
   } = opts;
@@ -173,6 +193,8 @@ export async function sendTemporaryMessageStream(opts: {
       content,
       history,
       systemPrompt,
+      contextSummary,
+      compactedMessageCount,
       webSearch,
       thinking,
     }),
@@ -186,6 +208,8 @@ export async function sendTemporaryMessageStream(opts: {
   for await (const evt of ndjsonStream(res)) {
     if (evt.type === "thinking") {
       onThinking?.(evt.token);
+    } else if (evt.type === "compaction") {
+      onCompaction?.(evt);
     } else if (evt.type === "token") {
       onToken(evt.token);
     } else if (evt.type === "tool" || evt.type === "tool_result") {

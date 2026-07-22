@@ -82,6 +82,13 @@ router.post(
         {
           onToken: (token) => safeWriteLine({ type: "token", token }),
           onThinking: (token) => safeWriteLine({ type: "thinking", token }),
+          previousSummary: req.body.contextSummary ?? null,
+          compactedMessageCount: req.body.compactedMessageCount ?? 0,
+          onCompaction: (event) =>
+            safeWriteLine({
+              type: "compaction",
+              ...event,
+            }),
           webSearchMode,
           thinkingMode,
           onToolEvent: (evt) => safeWriteLine(evt),
@@ -211,6 +218,11 @@ router.post(
         {
           onToken: (token) => safeWriteLine({ type: "token", token }),
           onThinking: (token) => safeWriteLine({ type: "thinking", token }),
+          onCompaction: (event) =>
+            safeWriteLine({
+              type: "compaction",
+              status: event.status,
+            }),
           webSearchMode,
           thinkingMode,
           onToolEvent: (evt) => safeWriteLine(evt),

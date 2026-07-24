@@ -5,6 +5,7 @@ import * as convoService from "../service/conversationService";
 import {
   createConversationSchema,
   updateConversationSchema,
+  searchConversationsSchema,
   sendMessageSchema,
   sendTempMessageSchema,
 } from "../validation/conversation";
@@ -122,6 +123,16 @@ router.post(
       res.end();
       return;
     }
+  })
+);
+
+router.get(
+  "/search",
+  validateRequest(searchConversationsSchema),
+  asyncHandler(async (req, res) => {
+    const query = String(req.query.q ?? "");
+    const results = await convoService.searchConversations(req.user!.id, query);
+    res.json({ results });
   })
 );
 

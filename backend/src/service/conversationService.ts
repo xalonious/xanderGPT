@@ -620,6 +620,71 @@ export async function listConversations(userId: string) {
   });
 }
 
+function createSearchSnippet(content: string, query: string): string {
+  const normalizedContent = content.replace(/\s+/g, " ").trim();
+  const matchIndex = normalizedContent.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  if (matchIndex === -1) return normalizedContent.slice(0, 180);
+
+  const start = Math.max(0, matchIndex - 70);
+  const end = Math.min(normalizedContent.length, matchIndex + query.length + 110);
+  return (
+    (start > 0 ? "…" : "") +
+    normalizedContent.slice(start, end) +
+    (end < normalizedContent.length ? "…" : "")
+  );
+}
+
+export async function searchConversations(userId: string, rawQuery: string) {
+  const query = rawQuery.trim();
+  if (!query) return [];
+
+  const conversations = await prisma.conversation.findMany({
+    where: {
+      userId,
+      OR: [
+        { title: { contains: query } },
+        {
+          messages: {
+            some: {
+              role: { in: ["user", "assistant"] },
+              content: { contains: query },
+            },
+          },
+        },
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      title: true,
+      updatedAt: true,
+      messages: {
+        where: {
+          role: { in: ["user", "assistant"] },
+          content: { contains: query },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        select: { id: true, content: true },
+      },
+    },
+  });
+
+  return conversations.map((conversation) => {
+    const matchedMessage = conversation.messages[0];
+
+    return {
+      id: conversation.id,
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      matchType: matchedMessage ? ("message" as const) : ("title" as const),
+      messageId: matchedMessage?.id ?? null,
+      snippet: matchedMessage ? createSearchSnippet(matchedMessage.content, query) : null,
+    };
+  });
+}
+
 export async function createConversation(userId: string, title?: string, systemPrompt?: string) {
   const prefs = (systemPrompt ?? "").trim();
   return prisma.conversation.create({

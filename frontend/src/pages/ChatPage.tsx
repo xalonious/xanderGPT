@@ -65,6 +65,10 @@ export default function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const convoId = id && id !== "new" ? id : null;
+  const focusedMessageId = useMemo(
+    () => new URLSearchParams(location.search).get("message"),
+    [location.search]
+  );
 
   const { create, conversations, updateTitleLocal, setSystemPrompt } = useConversations();
   const { messages, setMessages, loading } = useMessages(convoId);
@@ -480,7 +484,11 @@ export default function ChatPage() {
           </div>
         </div>
       ) : (
-        <MessageList messages={loading && !temporaryChat ? [] : visibleMessages} />
+        <MessageList
+          messages={loading && !temporaryChat ? [] : visibleMessages}
+          targetMessageId={focusedMessageId}
+          scrollRequestKey={location.key}
+        />
       )}
 
       <div className="shrink-0">

@@ -23,6 +23,7 @@ Brave Search API.
 - Real-time, cancellable response streaming with NDJSON
 - Email and password authentication with HTTP-only JWT cookies
 - Persistent conversations and messages stored with Prisma and MySQL
+- Conversation search across chat titles and user/assistant message contents
 - Per-conversation system prompts and automatic conversation titles
 - Temporary chat mode that does not write messages to the database
 - Automatic or user-forced Brave web search with query refinement and cited evidence
@@ -224,6 +225,10 @@ the automatic web-search and thinking decisions for the next message.
 - **Temporary chat:** Messages and the temporary system prompt remain in the
   browser session and are sent as short-lived request context, without creating
   conversation or message records in MySQL.
+- **Conversation search:** The sidebar search dialog shows recent chats before
+  a query is entered, then searches both conversation titles and saved user or
+  assistant messages. Opening a message match loads its conversation, scrolls
+  directly to the matched message, and briefly highlights it.
 
 Only the first URL in a message is extracted. URL reading currently accepts
 HTML pages, limits page size and extracted context, and may fail on paywalls,
@@ -242,6 +247,7 @@ All routes are prefixed with `/api`. Conversation routes require a valid
 | `POST` | `/auth/logout` | Clear the authentication cookie |
 | `GET` | `/auth/me` | Return the authenticated user |
 | `GET` | `/conversations` | List the user's conversations |
+| `GET` | `/conversations/search?q=...` | Search the user's conversation titles and message contents |
 | `POST` | `/conversations` | Create a conversation |
 | `PATCH` | `/conversations/:id` | Update a title or system prompt |
 | `DELETE` | `/conversations/:id` | Delete a conversation and its messages |

@@ -60,3 +60,55 @@ body::before {
 .dot:nth-child(3) {
   animation-delay: 0.4s;
 }
+
+@keyframes chat-search-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes chat-search-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes chat-search-target-flash {
+  0% {
+    background-color: rgb(255 255 255 / 0);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0);
+  }
+  22% {
+    background-color: rgb(255 255 255 / 0.065);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 0 30px rgb(255 255 255 / 0.035);
+  }
+  100% {
+    background-color: rgb(255 255 255 / 0);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0);
+  }
+}
+
+.chat-search-backdrop {
+  animation: chat-search-backdrop-in 160ms ease-out both;
+}
+
+.chat-search-dialog {
+  transform-origin: center;
+  animation: chat-search-dialog-in 190ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.chat-search-target {
+  animation: chat-search-target-flash 1800ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-search-backdrop,
+  .chat-search-dialog,
+  .chat-search-target {
+    animation: none;
+  }
+}

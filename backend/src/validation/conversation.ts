@@ -14,6 +14,12 @@ export const updateConversationSchema = {
   }).or("title", "systemPrompt"),
 };
 
+export const searchConversationsSchema = {
+  query: Joi.object({
+    q: Joi.string().trim().min(1).max(200).required(),
+  }),
+};
+
 export const sendMessageSchema = {
   body: Joi.object({
     content: Joi.string().min(1).max(20000).required(),

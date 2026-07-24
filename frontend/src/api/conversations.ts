@@ -27,13 +27,29 @@ export type MessageDTO = {
   createdAt: string;
 };
 
+export type ConversationSearchResult = {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+  matchType: "title" | "message";
+  messageId: string | null;
+  snippet: string | null;
+};
+
 type ConversationsResponse = { conversations: ConversationDTO[] };
 type ConversationResponse = { conversation: ConversationDTO };
 type MessagesResponse = { messages: MessageDTO[] };
 type MessageResponse = { message: MessageDTO };
+type ConversationSearchResponse = { results: ConversationSearchResult[] };
 
 export function listConversations(): Promise<ConversationDTO[]> {
   return api.get<ConversationsResponse>("/conversations").then((r) => r.data.conversations);
+}
+
+export function searchConversations(query: string): Promise<ConversationSearchResult[]> {
+  return api
+    .get<ConversationSearchResponse>("/conversations/search", { params: { q: query } })
+    .then((r) => r.data.results);
 }
 
 export function createConversation(title: string, systemPrompt?: string): Promise<ConversationDTO> {

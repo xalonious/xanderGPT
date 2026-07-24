@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { useConversations } from "../hooks/useConversations";
+import ChatSearchDialog from "./ChatSearchDialog";
 
 function IconPlus() {
   return (
@@ -33,6 +34,15 @@ function IconPencil() {
   );
 }
 
+function IconSearch() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function Sidebar() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -40,6 +50,7 @@ export default function Sidebar() {
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const activeId = useMemo(() => {
     if (!id || id === "new") return null;
@@ -97,13 +108,21 @@ export default function Sidebar() {
 
   return (
     <aside className="w-[280px] shrink-0 h-screen flex flex-col border-r border-white/10 bg-[rgb(var(--sidebar))]">
-      <div className="p-3 border-b border-white/10">
+      <div className="space-y-2 p-3 border-b border-white/10">
         <button
           onClick={onNewChat}
           className="w-full inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 px-3 py-2 text-sm text-zinc-100 transition"
         >
           <IconPlus />
           <span className="font-medium">New chat</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          className="w-full inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-300 hover:bg-white/5 hover:text-zinc-100 transition"
+        >
+          <IconSearch />
+          <span>Search chats</span>
         </button>
       </div>
 
@@ -193,6 +212,12 @@ export default function Sidebar() {
       <div className="p-3 border-t border-white/10 text-xs text-zinc-500">
         XanderGPT • Local
       </div>
+
+      <ChatSearchDialog
+        open={searchOpen}
+        conversations={conversations}
+        onClose={() => setSearchOpen(false)}
+      />
     </aside>
   );
 }

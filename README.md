@@ -80,7 +80,9 @@ ollama pull qwen3:8b
 ollama create xandergpt -f Modelfile
 ```
 
-The `Modelfile` defines the assistant identity and default generation settings.
+The `Modelfile` selects the base model and its default generation settings.
+Application prompts, including the assistant identity, are assembled by the
+backend from `backend/src/prompts/`.
 You can use a different Ollama model by changing `OLLAMA_MODEL`, but the named
 model must already exist in Ollama.
 
@@ -198,7 +200,10 @@ For each message, the backend loads recent conversation history, combines the
 application prompt with any conversation-specific instructions, and makes one
 unified planning call to decide whether calculator, web-search, and extended
 thinking capabilities are relevant. Forced controls in the tools menu override
-the automatic web-search and thinking decisions for the next message.
+the automatic web-search and thinking decisions for the next message. The
+current server date is injected at request time so both the planner and final
+answer can recognize time-sensitive questions without storing a stale date in
+the conversation.
 
 - **Web search:** The model can search automatically when a prompt needs current
   information, while the tools menu can force search for the next message. The
@@ -269,6 +274,7 @@ xanderGPT/
 |   `-- src/
 |       |-- core/           # Authentication, middleware, logging, and errors
 |       |-- data/           # Prisma connection and optional seed script
+|       |-- prompts/        # Assistant, routing, tool, and runtime prompt builders
 |       |-- rest/           # Auth, health, and conversation routes
 |       |-- service/        # Chat, Ollama, authentication, and tool logic
 |       `-- validation/     # Joi request schemas

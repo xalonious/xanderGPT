@@ -409,9 +409,11 @@ export default function MessageBubble({ message }: { message: convoApi.MessageDT
       <div className="w-full flex justify-end">
         <div
           className={[
-            "max-w-[46rem] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-            "bg-white/5 border border-white/10 text-zinc-100",
-            "shadow-[0_10px_25px_rgba(0,0,0,0.35)]",
+            "max-w-[42rem] rounded-[1.25rem] rounded-br-md border border-white/[0.08]",
+            "bg-gradient-to-b from-zinc-800/95 to-zinc-800/75 px-4 py-2.5",
+            "text-[15px] leading-6 text-zinc-100",
+            "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+            "user-message-bubble",
           ].join(" ")}
         >
           <Markdown>{message.content}</Markdown>

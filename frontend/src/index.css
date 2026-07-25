@@ -105,10 +105,27 @@ body::before {
   animation: chat-search-target-flash 1800ms ease-out both;
 }
 
+@keyframes user-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.user-message-bubble {
+  transform-origin: bottom right;
+  animation: user-message-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-search-backdrop,
   .chat-search-dialog,
-  .chat-search-target {
+  .chat-search-target,
+  .user-message-bubble {
     animation: none;
   }
 }

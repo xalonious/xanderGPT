@@ -18,7 +18,6 @@ export default function MessageList({
   scrollRequestKey?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
   const handledFocusRef = useRef<string | null>(null);
 
   const stickRef = useRef(true);
@@ -53,7 +52,13 @@ export default function MessageList({
     const prev = prevVisibleCountRef.current;
     const isNewMessage = visibleCount > prev;
 
-    endRef.current?.scrollIntoView({ behavior: isNewMessage ? "smooth" : "auto" });
+    const scroller = scrollerRef.current;
+    if (scroller) {
+      scroller.scrollTo({
+        top: scroller.scrollHeight,
+        behavior: isNewMessage ? "smooth" : "auto",
+      });
+    }
     prevVisibleCountRef.current = visibleCount;
   }, [messages, visibleCount]);
 
@@ -193,7 +198,7 @@ export default function MessageList({
             </div>
           );
         })}
-        <div ref={endRef} />
+        <div />
       </div>
     </div>
   );

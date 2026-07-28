@@ -23,6 +23,7 @@ Brave Search API.
 - Real-time, cancellable response streaming with NDJSON
 - Email and password authentication with HTTP-only JWT cookies
 - Persistent conversations and messages stored with Prisma and MySQL
+- Drag-and-drop image attachments with previews and multimodal Ollama prompts
 - Conversation search across chat titles and user/assistant message contents
 - Per-conversation system prompts and automatic conversation titles
 - Temporary chat mode that does not write messages to the database
@@ -58,8 +59,9 @@ Before installing xanderGPT, make sure you have:
 - [Ollama](https://ollama.com/) installed and running
 - A [Brave Search API](https://brave.com/search/api/) key if you want web search
 
-The included model configuration is based on `qwen3:8b`. Running it locally
-requires enough memory for the model and its context.
+The included model configuration is based on the vision-capable `qwen3.5:9b`.
+Running it locally requires enough memory for the model, image encoder, and
+configured context.
 
 ## Setup
 
@@ -76,7 +78,7 @@ From the repository root, pull the base model and create the configured
 `xandergpt` model:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3.5:9b
 ollama create xandergpt -f Modelfile
 ```
 
@@ -227,6 +229,16 @@ the conversation.
   turns remain verbatim, original saved messages stay in MySQL, and the UI shows
   a compaction status while the summary is prepared. Temporary chats keep the
   same rolling state only in browser memory.
+- **Image attachments:** JPEG, PNG, WebP, and GIF files can be selected from the
+  tools menu, dropped anywhere over the chat, or pasted from the clipboard into
+  the composer. The browser resizes large non-GIF
+  images to a maximum 1024-pixel side before upload. Each request accepts up to
+  four images, 8 MB per image, and 20 MB total. Persistent-chat binaries are
+  stored in a separate attachment table; message responses contain metadata
+  and use an authenticated download endpoint. Base64 is created only for the
+  Ollama request boundary. The attachment records include a type and optional
+  extracted-text field so document parsers can be added later without changing
+  the message model.
 - **Temporary chat:** Messages and the temporary system prompt remain in the
   browser session and are sent as short-lived request context, without creating
   conversation or message records in MySQL.
@@ -257,9 +269,14 @@ All routes are prefixed with `/api`. Conversation routes require a valid
 | `PATCH` | `/conversations/:id` | Update a title or system prompt |
 | `DELETE` | `/conversations/:id` | Delete a conversation and its messages |
 | `GET` | `/conversations/:id/messages` | List messages in a conversation |
+| `GET` | `/conversations/:id/attachments/:attachmentId` | Read a saved message attachment |
 | `POST` | `/conversations/:id/messages` | Send a message without streaming |
 | `POST` | `/conversations/:id/messages/stream` | Send a message as an NDJSON stream |
 | `POST` | `/conversations/temp/stream` | Stream a temporary, non-persistent chat |
+
+Message request bodies accept an optional `attachments` array containing
+`kind`, `name`, `mimeType`, and raw base64 `data`. Only `kind: "image"` is
+accepted currently.
 
 The streaming endpoints can emit `compaction`, `thinking`, `token`, `tool`,
 `tool_result`, `title`, `done`, and `error` events. Closing or cancelling the
@@ -307,18 +324,6 @@ Run these commands from the indicated directory.
 The seed script contains a fixed development credential and should not be used
 to provision production accounts.
 
-## Production notes
-
-The repository currently provides development scripts but does not include a
-complete production deployment configuration. Before exposing it publicly:
-
-- Use a long, randomly generated `JWT_SECRET` and production database account.
-- Serve both applications over HTTPS and set `NODE_ENV=production`.
-- Restrict `CORS_ORIGIN` to the deployed frontend origin.
-- Place the Express API and Ollama behind appropriate network controls.
-- Do not expose Ollama or MySQL directly to the public internet.
-- Add your preferred process manager, reverse proxy, monitoring, and backup
-  strategy.
 
 ## License
 

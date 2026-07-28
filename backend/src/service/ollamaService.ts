@@ -1,5 +1,5 @@
 type ChatRole = "system" | "user" | "assistant";
-export type OllamaMessage = { role: ChatRole; content: string };
+export type OllamaMessage = { role: ChatRole; content: string; images?: string[] };
 export type OllamaThink = boolean | "low" | "medium" | "high";
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
@@ -25,6 +25,7 @@ function buildBody(
     messages,
     stream,
     think,
+    keep_alive: "30m",
     options: { ...DEFAULT_OPTIONS, ...(optionsOverride ?? {}) },
   };
 }

@@ -16,6 +16,24 @@ export type WebSource = {
   description: string;
 };
 
+export type AttachmentPayload = {
+  kind: "image";
+  name: string;
+  mimeType: string;
+  size: number;
+  data: string;
+};
+
+export type MessageAttachmentDTO = {
+  id: string;
+  kind: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  previewUrl?: string;
+  data?: string;
+};
+
 export type MessageDTO = {
   id: string;
   conversationId: string;
@@ -24,6 +42,7 @@ export type MessageDTO = {
   thinking: string | null;
   thinkingDurationMs: number | null;
   sources: WebSource[] | null;
+  attachments?: MessageAttachmentDTO[];
   createdAt: string;
 };
 
@@ -88,8 +107,21 @@ export function getMessages(conversationId: string): Promise<MessageDTO[]> {
     .then((r) => r.data.messages);
 }
 
-export function sendMessage(conversationId: string, content: string): Promise<MessageDTO> {
+export function getAttachmentUrl(conversationId: string, attachmentId: string): string {
+  const base = import.meta.env.VITE_API_URL;
+  if (!base) throw new Error("VITE_API_URL is not set");
+  return `${base}/conversations/${conversationId}/attachments/${attachmentId}`;
+}
+
+export function sendMessage(
+  conversationId: string,
+  content: string,
+  attachments: AttachmentPayload[] = []
+): Promise<MessageDTO> {
   return api
-    .post<MessageResponse>(`/conversations/${conversationId}/messages`, { content })
+    .post<MessageResponse>(`/conversations/${conversationId}/messages`, {
+      content,
+      attachments,
+    })
     .then((r) => r.data.message);
 }

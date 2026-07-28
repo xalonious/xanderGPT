@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 
 export default function TypingIndicator({
   mode = "typing",
+  imageCount = 1,
 }: {
-  mode?: "typing" | "searching" | "calculating" | "fetching" | "compacting";
+  mode?:
+    | "typing"
+    | "searching"
+    | "calculating"
+    | "fetching"
+    | "compacting"
+    | "processing-image";
+  imageCount?: number;
 }) {
   const [dots, setDots] = useState("");
 
@@ -14,6 +22,40 @@ export default function TypingIndicator({
 
     return () => clearInterval(i);
   }, []);
+
+  if (mode === "processing-image") {
+    const label = imageCount === 1 ? "Processing image" : `Processing ${imageCount} images`;
+
+    return (
+      <div className="flex flex-col gap-2 py-1">
+        <div className="flex items-center gap-2 text-sm text-zinc-300">
+          <span
+            className="flex h-5 w-5 items-center justify-center rounded-md border border-white/10 bg-white/5"
+            aria-hidden="true"
+          >
+            <span className="h-2.5 w-2.5 animate-pulse rounded-sm bg-zinc-400" />
+          </span>
+          <span className="tracking-wide">
+            {label}
+            {dots}
+          </span>
+        </div>
+
+        <div className="relative h-1.5 w-48 overflow-hidden rounded-full bg-white/10">
+          <div className="absolute inset-0 animate-[shimmer_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+        </div>
+
+        <style>
+          {`
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
 
   if (mode === "compacting") {
     return (

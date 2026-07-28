@@ -90,9 +90,24 @@ async function* ndjsonStream(res: Response): AsyncGenerator<StreamEvent> {
   }
 }
 
+function streamErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (/model runner has unexpectedly stopped|resource limitations/i.test(raw)) {
+    return "The local model ran out of resources while processing this request.";
+  }
+  return raw || "The response stream failed.";
+}
+
 export async function sendMessageStream(opts: {
   conversationId: string;
   content: string;
+  attachments?: Array<{
+    kind: "image";
+    name: string;
+    mimeType: string;
+    size: number;
+    data: string;
+  }>;
   webSearch?: "auto" | "force" | "off";
   thinking?: "auto" | "force" | "off";
   signal?: AbortSignal;
@@ -108,6 +123,7 @@ export async function sendMessageStream(opts: {
   const {
     conversationId,
     content,
+    attachments = [],
     webSearch = "auto",
     thinking = "auto",
     signal,
@@ -124,12 +140,12 @@ export async function sendMessageStream(opts: {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     signal,
-    body: JSON.stringify({ content, webSearch, thinking }),
+    body: JSON.stringify({ content, attachments, webSearch, thinking }),
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed (${res.status})`);
+    throw new Error(streamErrorMessage(text || `Request failed (${res.status})`));
   }
 
   for await (const evt of ndjsonStream(res)) {
@@ -144,17 +160,36 @@ export async function sendMessageStream(opts: {
     } else if (evt.type === "tool" || evt.type === "tool_result") {
       onTool?.(evt);
     } else if (evt.type === "error") {
-      throw new Error(evt.message || "Stream error");
+      throw new Error(streamErrorMessage(evt.message));
     } else if (evt.type === "done") {
       onDone?.(evt.thinkingDurationMs ?? null);
       return;
     }
   }
+
+  throw new Error("The response stream ended before completion.");
 }
 
 export async function sendTemporaryMessageStream(opts: {
   content: string;
-  history: Array<{ role: "user" | "assistant"; content: string }>;
+  attachments?: Array<{
+    kind: "image";
+    name: string;
+    mimeType: string;
+    size: number;
+    data: string;
+  }>;
+  history: Array<{
+    role: "user" | "assistant";
+    content: string;
+    attachments?: Array<{
+      kind: "image";
+      name: string;
+      mimeType: string;
+      size: number;
+      data: string;
+    }>;
+  }>;
   systemPrompt?: string;
   contextSummary?: string | null;
   compactedMessageCount?: number;
@@ -170,6 +205,7 @@ export async function sendTemporaryMessageStream(opts: {
 }) {
   const {
     content,
+    attachments = [],
     history,
     systemPrompt = "",
     contextSummary = null,
@@ -191,6 +227,7 @@ export async function sendTemporaryMessageStream(opts: {
     signal,
     body: JSON.stringify({
       content,
+      attachments,
       history,
       systemPrompt,
       contextSummary,
@@ -202,7 +239,7 @@ export async function sendTemporaryMessageStream(opts: {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed (${res.status})`);
+    throw new Error(streamErrorMessage(text || `Request failed (${res.status})`));
   }
 
   for await (const evt of ndjsonStream(res)) {
@@ -215,10 +252,12 @@ export async function sendTemporaryMessageStream(opts: {
     } else if (evt.type === "tool" || evt.type === "tool_result") {
       onTool?.(evt);
     } else if (evt.type === "error") {
-      throw new Error(evt.message || "Stream error");
+      throw new Error(streamErrorMessage(evt.message));
     } else if (evt.type === "done") {
       onDone?.(evt.thinkingDurationMs ?? null);
       return;
     }
   }
+
+  throw new Error("The response stream ended before completion.");
 }

@@ -49,6 +49,23 @@ model Message {
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments    MessageAttachment[]
 
   @@index([conversationId, createdAt])
+}
+
+model MessageAttachment {
+  id            String   @id @default(cuid())
+  kind          String   @db.VarChar(32)
+  name          String   @db.VarChar(255)
+  mimeType      String   @db.VarChar(127)
+  size          Int
+  data          Bytes    @db.LongBlob
+  extractedText String?  @db.LongText
+  createdAt     DateTime @default(now())
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }

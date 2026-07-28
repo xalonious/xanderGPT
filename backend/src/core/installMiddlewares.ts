@@ -19,5 +19,5 @@ export default function installMiddlewares(app: Express) {
   app.use(cors(corsOptions));
   app.use(helmet());
   app.use(loggingMiddleware)
-  app.use(express.json());
+  app.use(express.json({ limit: '30mb' }));
 }

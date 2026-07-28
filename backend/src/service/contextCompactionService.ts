@@ -8,10 +8,12 @@ const RECENT_CONTEXT_TARGET_TOKENS = 2450;
 const MIN_RECENT_MESSAGES = 2;
 const MAX_SUMMARY_CHARS = 6_000;
 const SUMMARY_BATCH_TARGET_TOKENS = 4000;
+const ESTIMATED_IMAGE_TOKENS = 1024;
 
 export type CompactableMessage = {
   role: "user" | "assistant";
   content: string;
+  images?: string[];
 };
 
 export type StoredContextSummary = {
@@ -25,19 +27,28 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
 
-export function estimateMessagesTokens(messages: OllamaMessage[]): number {
-  return messages.reduce(
-    (total, message) => total + estimateTextTokens(message.content) + 6,
-    0
+function estimateMessageTokens(message: Pick<OllamaMessage, "content" | "images">) {
+  return (
+    estimateTextTokens(message.content) +
+    (message.images?.length ?? 0) * ESTIMATED_IMAGE_TOKENS +
+    6
   );
+}
+
+export function estimateMessagesTokens(messages: OllamaMessage[]): number {
+  return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
 }
 
 export function shouldCompactContext(
   history: OllamaMessage[],
-  nextUserMessage: string
+  nextUserMessage: string,
+  nextUserImageCount = 0
 ): boolean {
   return (
-    estimateMessagesTokens(history) + estimateTextTokens(nextUserMessage) + 6 >=
+    estimateMessagesTokens(history) +
+      estimateTextTokens(nextUserMessage) +
+      nextUserImageCount * ESTIMATED_IMAGE_TOKENS +
+      6 >=
     COMPACTION_TRIGGER_TOKENS
   );
 }
@@ -54,7 +65,7 @@ export function splitMessagesForCompaction(messages: CompactableMessage[]): {
   let splitIndex = messages.length;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const messageTokens = estimateTextTokens(messages[index].content) + 6;
+    const messageTokens = estimateMessageTokens(messages[index]);
     const recentCount = messages.length - index;
 
     if (
@@ -93,7 +104,7 @@ export async function createRollingSummary(
   let currentBatchTokens = 0;
 
   for (const message of messages) {
-    const messageTokens = estimateTextTokens(message.content) + 6;
+    const messageTokens = estimateMessageTokens(message);
     if (
       currentBatch.length > 0 &&
       currentBatchTokens + messageTokens > SUMMARY_BATCH_TARGET_TOKENS

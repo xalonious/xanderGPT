@@ -31,6 +31,15 @@ import {
   type CompactableMessage,
   type StoredContextSummary,
 } from "./contextCompactionService";
+import {
+  attachmentImages,
+  attachmentLabel,
+  attachmentMetadataSelect,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  prepareAttachments,
+  type IncomingAttachment,
+  type PreparedAttachment,
+} from "./attachmentService";
 
 const URL_TOOL_MAX_CHARS = 18_000;
 const URL_TOOL_EXCERPT_CHARS = 280;
@@ -93,6 +102,26 @@ function assertNonEmpty(content: string) {
   return trimmed;
 }
 
+function assertMessageInput(content: string, attachments: PreparedAttachment[]) {
+  const trimmed = content.trim();
+  if (!trimmed && attachments.length === 0) {
+    throw ServiceError.validationFailed("Enter a message or attach an image");
+  }
+  return trimmed;
+}
+
+function toOllamaAttachmentMessage(
+  role: "user" | "assistant",
+  content: string,
+  attachments: PreparedAttachment[]
+): OllamaMessage {
+  return {
+    role,
+    content: attachmentLabel(content, attachments),
+    images: attachmentImages(attachments),
+  };
+}
+
 async function ensureOwnership(userId: string, conversationId: string) {
   const convo = await prisma.conversation.findFirst({
     where: { id: conversationId, userId },
@@ -106,6 +135,7 @@ async function ensureOwnership(userId: string, conversationId: string) {
 async function preparePersistentHistory(
   conversationId: string,
   nextUserMessage: string,
+  nextUserImageCount = 0,
   opts?: {
     signal?: AbortSignal;
     onCompaction?: (event: CompactionEvent) => void;
@@ -119,7 +149,21 @@ async function preparePersistentHistory(
     prisma.message.findMany({
       where: { conversationId },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: { id: true, role: true, content: true },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        attachments: {
+          select: {
+            kind: true,
+            name: true,
+            mimeType: true,
+            size: true,
+            data: true,
+            extractedText: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -138,11 +182,31 @@ async function preparePersistentHistory(
       (message): message is typeof message & { role: "user" | "assistant" } =>
         message.role === "user" || message.role === "assistant"
     )
-    .map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-    }));
+    .map((message) => {
+      const attachments: PreparedAttachment[] = message.attachments
+        .filter((attachment) => attachment.kind === "image")
+        .map((attachment) => ({
+          kind: "image",
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          data: Buffer.from(attachment.data),
+          extractedText: null,
+        }));
+
+      const modelMessage = toOllamaAttachmentMessage(
+        message.role,
+        message.content,
+        attachments
+      );
+
+      return {
+        id: message.id,
+        role: message.role as "user" | "assistant",
+        content: modelMessage.content,
+        images: modelMessage.images,
+      };
+    });
 
   let compactedMessageCount = 0;
   if (latestSummary) {
@@ -170,7 +234,9 @@ async function preparePersistentHistory(
   ];
 
   const currentHistory = buildHistory(latestSummary?.summary ?? null, uncompacted);
-  if (!shouldCompactContext(currentHistory, nextUserMessage)) return currentHistory;
+  if (!shouldCompactContext(currentHistory, nextUserMessage, nextUserImageCount)) {
+    return currentHistory;
+  }
 
   const { compactable, recent } = splitMessagesForCompaction(uncompacted);
   if (compactable.length === 0) return currentHistory;
@@ -216,6 +282,7 @@ async function prepareTemporaryHistory(
   history: CompactableMessage[],
   systemPrompt: string,
   nextUserMessage: string,
+  nextUserImageCount: number,
   opts: {
     previousSummary?: string | null;
     compactedMessageCount?: number;
@@ -237,7 +304,9 @@ async function prepareTemporaryHistory(
 
   const previousSummary = opts.previousSummary?.trim() || null;
   const currentHistory = buildHistory(previousSummary, history);
-  if (!shouldCompactContext(currentHistory, nextUserMessage)) return currentHistory;
+  if (!shouldCompactContext(currentHistory, nextUserMessage, nextUserImageCount)) {
+    return currentHistory;
+  }
 
   const { compactable, recent } = splitMessagesForCompaction(history);
   if (compactable.length === 0) return currentHistory;
@@ -334,7 +403,8 @@ async function buildToolSystemBlocks(
     (webSearchMode === "force" ||
       (webSearchMode !== "off" && hasStrongWebSearchCue(trimmed)));
 
-  const plan = await planRequest(history, trimmed, {
+  const plannerHistory = history.map(({ role, content }) => ({ role, content }));
+  const plan = await planRequest(plannerHistory, trimmed, {
     allowWeb,
     requireWeb,
     allowCalculator: true,
@@ -448,6 +518,7 @@ async function runStreamWithHistory(
     webSearchMode?: WebSearchMode;
     thinkingMode?: ThinkingMode;
     onToolEvent?: (evt: ToolEvent) => void;
+    userImages?: string[];
   }
 ): Promise<StreamResult> {
   const trimmed = assertNonEmpty(content);
@@ -477,12 +548,28 @@ async function runStreamWithHistory(
     };
   }
 
-  const prompt: OllamaMessage[] = [...history, ...toolSystemBlocks, { role: "user", content: trimmed }];
+  const prompt: OllamaMessage[] = [
+    ...history,
+    ...toolSystemBlocks,
+    { role: "user", content: trimmed, images: opts.userImages },
+  ];
 
   let assistantText = "";
   let thinkingText = "";
   let thinkingStartedAt: number | null = null;
   let thinkingFinishedAt: number | null = null;
+  const hasVisionInput = (opts.userImages?.length ?? 0) > 0;
+  const visionTimeoutController = hasVisionInput ? new AbortController() : null;
+  const visionTimeout = visionTimeoutController
+    ? setTimeout(() => visionTimeoutController.abort(), 90_000)
+    : null;
+  const generationSignal = visionTimeoutController
+    ? AbortSignal.any(
+        [opts.signal, visionTimeoutController.signal].filter(
+          (signal): signal is AbortSignal => Boolean(signal)
+        )
+      )
+    : opts.signal;
 
   const getThinkingDurationMs = () => {
     if (thinkingStartedAt === null) return null;
@@ -499,10 +586,18 @@ async function runStreamWithHistory(
         assistantText += token;
         opts.onToken(token);
       },
-      useThinking
-        ? { temperature: 0.6, top_p: 0.95, top_k: 20 }
-        : { temperature: 0.7, top_p: 0.8, top_k: 20 },
-      opts.signal,
+      hasVisionInput
+        ? {
+            temperature: 0.5,
+            top_p: 0.85,
+            top_k: 20,
+            num_ctx: 2048,
+            num_predict: 1024,
+          }
+        : useThinking
+          ? { temperature: 0.6, top_p: 0.95, top_k: 20 }
+          : { temperature: 0.7, top_p: 0.8, top_k: 20 },
+      generationSignal,
       (token) => {
         if (thinkingStartedAt === null) thinkingStartedAt = Date.now();
         thinkingText += token;
@@ -511,6 +606,14 @@ async function runStreamWithHistory(
       useThinking
     );
   } catch (err) {
+    if (
+      visionTimeoutController?.signal.aborted &&
+      !opts.signal?.aborted
+    ) {
+      throw new Error(
+        "Vision processing timed out. The local model does not have enough available resources."
+      );
+    }
     if (opts.signal?.aborted || isAbortError(err)) {
       return {
         assistantText,
@@ -520,6 +623,8 @@ async function runStreamWithHistory(
       };
     }
     throw err;
+  } finally {
+    if (visionTimeout) clearTimeout(visionTimeout);
   }
 
   if (thinkingStartedAt !== null && thinkingFinishedAt === null) {
@@ -691,21 +796,75 @@ export async function getConversationMessages(userId: string, conversationId: st
       thinkingDurationMs: true,
       sources: true,
       createdAt: true,
+      attachments: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: attachmentMetadataSelect,
+      },
     },
   });
 }
 
-export async function sendMessageNonStream(userId: string, conversationId: string, content: string) {
+export async function getMessageAttachment(
+  userId: string,
+  conversationId: string,
+  attachmentId: string
+) {
   await ensureOwnership(userId, conversationId);
-  const trimmed = assertNonEmpty(content);
 
-  const history = await preparePersistentHistory(conversationId, trimmed);
-  const assistantText = await ollamaChat([...history, { role: "user", content: trimmed }]);
+  const attachment = await prisma.messageAttachment.findFirst({
+    where: {
+      id: attachmentId,
+      message: { conversationId },
+    },
+    select: {
+      id: true,
+      name: true,
+      mimeType: true,
+      size: true,
+      data: true,
+    },
+  });
+
+  if (!attachment) throw ServiceError.notFound("Attachment not found");
+  return attachment;
+}
+
+export async function sendMessageNonStream(
+  userId: string,
+  conversationId: string,
+  content: string,
+  incomingAttachments: IncomingAttachment[] = []
+) {
+  await ensureOwnership(userId, conversationId);
+  const attachments = prepareAttachments(incomingAttachments);
+  const trimmed = assertMessageInput(content, attachments);
+  const userPrompt = toOllamaAttachmentMessage("user", trimmed, attachments);
+
+  const history = await preparePersistentHistory(
+    conversationId,
+    userPrompt.content,
+    userPrompt.images?.length ?? 0
+  );
+  const assistantText = await ollamaChat([...history, userPrompt]);
 
   const now = new Date();
   const assistantMessage = await prisma.$transaction(async (tx) => {
     await tx.message.create({
-      data: { conversationId, role: "user", content: trimmed },
+      data: {
+        conversationId,
+        role: "user",
+        content: trimmed,
+        attachments: {
+          create: attachments.map((attachment) => ({
+            kind: attachment.kind,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            data: Uint8Array.from(attachment.data),
+            extractedText: attachment.extractedText,
+          })),
+        },
+      },
       select: { id: true },
     });
 
@@ -720,6 +879,10 @@ export async function sendMessageNonStream(userId: string, conversationId: strin
         thinkingDurationMs: true,
         sources: true,
         createdAt: true,
+        attachments: {
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: attachmentMetadataSelect,
+        },
       },
     });
 
@@ -732,7 +895,7 @@ export async function sendMessageNonStream(userId: string, conversationId: strin
     return assistant;
   });
 
-  await maybeAutoTitleConversation(conversationId, trimmed);
+  await maybeAutoTitleConversation(conversationId, trimmed || attachments[0]?.name || "Image");
 
   return assistantMessage;
 }
@@ -751,6 +914,7 @@ export async function sendMessageStream(
         thinkingMode?: ThinkingMode;
         onToolEvent?: (evt: ToolEvent) => void;
         onCompaction?: (event: CompactionEvent) => void;
+        attachments?: IncomingAttachment[];
       },
   maybeSignal?: AbortSignal
 ): Promise<{
@@ -759,7 +923,11 @@ export async function sendMessageStream(
   aborted: boolean;
 }> {
   await ensureOwnership(userId, conversationId);
-  const trimmed = assertNonEmpty(content);
+  const incomingAttachments =
+    typeof onTokenOrOpts === "function" ? [] : onTokenOrOpts.attachments ?? [];
+  const attachments = prepareAttachments(incomingAttachments);
+  const trimmed = assertMessageInput(content, attachments);
+  const userPrompt = toOllamaAttachmentMessage("user", trimmed, attachments);
 
   const onToken = typeof onTokenOrOpts === "function" ? onTokenOrOpts : onTokenOrOpts.onToken;
   const signal = typeof onTokenOrOpts === "function" ? maybeSignal : onTokenOrOpts.signal;
@@ -788,18 +956,24 @@ export async function sendMessageStream(
     return { assistantMessage: null, titleUpdated: null, aborted: true };
   }
 
-  const history = await preparePersistentHistory(conversationId, trimmed, {
-    signal,
-    onCompaction,
-  });
+  const history = await preparePersistentHistory(
+    conversationId,
+    userPrompt.content,
+    userPrompt.images?.length ?? 0,
+    {
+      signal,
+      onCompaction,
+    }
+  );
 
-  const streamResult = await runStreamWithHistory(history, trimmed, {
+  const streamResult = await runStreamWithHistory(history, userPrompt.content, {
     onToken,
     onThinking,
     signal,
     webSearchMode,
     thinkingMode,
     onToolEvent: handleToolEvent,
+    userImages: userPrompt.images,
   });
 
   if (streamResult.aborted) {
@@ -809,8 +983,31 @@ export async function sendMessageStream(
   const now = new Date();
   const result = await prisma.$transaction(async (tx) => {
     const userMsg = await tx.message.create({
-      data: { conversationId, role: "user", content: trimmed },
-      select: { id: true, role: true, content: true, createdAt: true },
+      data: {
+        conversationId,
+        role: "user",
+        content: trimmed,
+        attachments: {
+          create: attachments.map((attachment) => ({
+            kind: attachment.kind,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            data: Uint8Array.from(attachment.data),
+            extractedText: attachment.extractedText,
+          })),
+        },
+      },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        createdAt: true,
+        attachments: {
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: attachmentMetadataSelect,
+        },
+      },
     });
 
     const assistantMsg = await tx.message.create({
@@ -831,6 +1028,10 @@ export async function sendMessageStream(
         thinkingDurationMs: true,
         sources: true,
         createdAt: true,
+        attachments: {
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: attachmentMetadataSelect,
+        },
       },
     });
 
@@ -843,14 +1044,21 @@ export async function sendMessageStream(
     return { userMsg, assistantMsg };
   });
 
-  const titleUpdated = await maybeAutoTitleConversation(conversationId, trimmed);
+  const titleUpdated = await maybeAutoTitleConversation(
+    conversationId,
+    trimmed || attachments[0]?.name || "Image"
+  );
 
   return { assistantMessage: result.assistantMsg, titleUpdated, aborted: false };
 }
 
 export async function sendTemporaryMessageStream(
   content: string,
-  history: Array<Pick<OllamaMessage, "role" | "content">>,
+  history: Array<{
+    role: "user" | "assistant";
+    content: string;
+    attachments?: IncomingAttachment[];
+  }>,
   systemPrompt: string,
   opts: {
     onToken: (token: string) => void;
@@ -862,20 +1070,48 @@ export async function sendTemporaryMessageStream(
     previousSummary?: string | null;
     compactedMessageCount?: number;
     onCompaction?: (event: CompactionEvent) => void;
+    attachments?: IncomingAttachment[];
   }
 ): Promise<StreamResult> {
-  const trimmed = assertNonEmpty(content);
+  let attachmentBytes = 0;
 
   const validHistory = history
     .filter(
-      (m): m is { role: "user" | "assistant"; content: string } =>
+      (
+        m
+      ): m is {
+        role: "user" | "assistant";
+        content: string;
+        attachments?: IncomingAttachment[];
+      } =>
         (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
-    );
+    )
+    .map((message) => {
+      const prepared = prepareAttachments(
+        message.attachments,
+        Math.max(0, MAX_TOTAL_ATTACHMENT_BYTES - attachmentBytes)
+      );
+      attachmentBytes += prepared.reduce((sum, attachment) => sum + attachment.size, 0);
+      const modelMessage = toOllamaAttachmentMessage(message.role, message.content, prepared);
+      return {
+        role: message.role,
+        content: modelMessage.content,
+        images: modelMessage.images,
+      };
+    });
+
+  const attachments = prepareAttachments(
+    opts.attachments,
+    Math.max(0, MAX_TOTAL_ATTACHMENT_BYTES - attachmentBytes)
+  );
+  const trimmed = assertMessageInput(content, attachments);
+  const userPrompt = toOllamaAttachmentMessage("user", trimmed, attachments);
 
   const composedHistory = await prepareTemporaryHistory(
     validHistory,
     systemPrompt,
-    trimmed,
+    userPrompt.content,
+    userPrompt.images?.length ?? 0,
     {
       previousSummary: opts.previousSummary,
       compactedMessageCount: opts.compactedMessageCount,
@@ -884,12 +1120,13 @@ export async function sendTemporaryMessageStream(
     }
   );
 
-  return runStreamWithHistory(composedHistory, trimmed, {
+  return runStreamWithHistory(composedHistory, userPrompt.content, {
     onToken: opts.onToken,
     onThinking: opts.onThinking,
     signal: opts.signal,
     webSearchMode: opts.webSearchMode,
     thinkingMode: opts.thinkingMode,
     onToolEvent: opts.onToolEvent,
+    userImages: userPrompt.images,
   });
 }

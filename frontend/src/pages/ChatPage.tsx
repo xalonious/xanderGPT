@@ -6,6 +6,10 @@ import { useMessages } from "../hooks/useMessages";
 import { useChatStream } from "../hooks/useChatStream";
 import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
+import {
+  toAttachmentPayload,
+  type AttachmentUpload,
+} from "../attachments";
 
 type WebSearchMode = "auto" | "force" | "off";
 type ThinkingMode = "auto" | "force" | "off";
@@ -314,6 +318,7 @@ export default function ChatPage() {
 
   const onSend = async (
     text: string,
+    attachments: AttachmentUpload[],
     webSearch: WebSearchMode,
     thinking: ThinkingMode
   ) => {
@@ -326,9 +331,27 @@ export default function ChatPage() {
           .map((m) => ({
             role: m.role as "user" | "assistant",
             content: String(m.content ?? ""),
+            attachments: Array.isArray(m.attachments)
+              ? m.attachments
+                  .filter(
+                    (attachment: AnyMessage) =>
+                      attachment?.kind === "image" &&
+                      typeof attachment?.data === "string"
+                  )
+                  .map((attachment: AnyMessage) =>
+                    toAttachmentPayload(attachment as AttachmentUpload)
+                  )
+              : [],
           }));
 
-        await sendTemporary(text, history, tempSystemPrompt, webSearch, thinking);
+        await sendTemporary(
+          text,
+          attachments,
+          history,
+          tempSystemPrompt,
+          webSearch,
+          thinking
+        );
         return;
       }
 
@@ -353,7 +376,7 @@ export default function ChatPage() {
         navigate(`/c/${actualId}`, { replace: true });
       }
 
-      await send(text, actualId, webSearch, thinking);
+      await send(text, attachments, actualId, webSearch, thinking);
     } catch (e: any) {
       setError(e?.message ?? "Send failed");
     }

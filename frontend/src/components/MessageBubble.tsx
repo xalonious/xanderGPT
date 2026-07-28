@@ -405,6 +405,10 @@ export default function MessageBubble({ message }: { message: convoApi.MessageDT
   const isUser = message.role === "user";
 
   if (isUser) {
+    const attachments = Array.isArray(message.attachments)
+      ? message.attachments.filter((attachment) => attachment.kind === "image")
+      : [];
+
     return (
       <div className="w-full flex justify-end">
         <div
@@ -416,7 +420,48 @@ export default function MessageBubble({ message }: { message: convoApi.MessageDT
             "user-message-bubble",
           ].join(" ")}
         >
-          <Markdown>{message.content}</Markdown>
+          {attachments.length > 0 && (
+            <div
+              className={[
+                "mb-2 grid gap-2 overflow-hidden rounded-xl",
+                attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
+              ].join(" ")}
+            >
+              {attachments.map((attachment) => {
+                const src =
+                  attachment.previewUrl ??
+                  (attachment.data
+                    ? `data:${attachment.mimeType};base64,${attachment.data}`
+                    : convoApi.getAttachmentUrl(message.conversationId, attachment.id));
+
+                return (
+                  <a
+                    key={attachment.id}
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group relative block overflow-hidden rounded-xl border border-white/10 bg-black/20"
+                    title={`Open ${attachment.name}`}
+                  >
+                    <img
+                      src={src}
+                      alt={attachment.name}
+                      loading="lazy"
+                      className={[
+                        "w-full object-cover transition duration-200 group-hover:scale-[1.015]",
+                        attachments.length === 1 ? "max-h-96" : "h-40",
+                      ].join(" ")}
+                    />
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-5 text-[10px] text-zinc-200 opacity-0 transition group-hover:opacity-100">
+                      {attachment.name}
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+
+          {message.content.trim() ? <Markdown>{message.content}</Markdown> : null}
         </div>
       </div>
     );

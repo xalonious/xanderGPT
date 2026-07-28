@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import Button from "./Button";
 import Textarea from "./TextArea";
+import {
+  formatFileSize,
+  IMAGE_ACCEPT,
+  MAX_IMAGE_COUNT,
+  MAX_TOTAL_IMAGE_BYTES,
+  prepareImageUpload,
+  type AttachmentUpload,
+} from "../attachments";
 
 type WebSearchMode = "auto" | "force";
 type ThinkingMode = "auto" | "force";
@@ -27,10 +36,18 @@ export default function Composer({
 }: {
   disabled?: boolean;
   streaming: boolean;
-  onSend: (text: string, webSearch: WebSearchMode, thinking: ThinkingMode) => void;
+  onSend: (
+    text: string,
+    attachments: AttachmentUpload[],
+    webSearch: WebSearchMode,
+    thinking: ThinkingMode
+  ) => void;
   onStop: () => void;
 }) {
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<AttachmentUpload[]>([]);
+  const [preparingFiles, setPreparingFiles] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [forceWebSearch, setForceWebSearch] = useState(false);
   const [forceThinking, setForceThinking] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -38,6 +55,7 @@ export default function Composer({
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const plusBtnRef = useRef<HTMLButtonElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     taRef.current?.focus();
@@ -119,16 +137,115 @@ export default function Composer({
     return () => window.removeEventListener("keydown", handler);
   }, [disabled, streaming, text]);
 
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      if (disabled || streaming || preparingFiles || files.length === 0) return;
+
+      const openSlots = MAX_IMAGE_COUNT - attachments.length;
+      if (openSlots <= 0) {
+        toast.error(`You can attach up to ${MAX_IMAGE_COUNT} images`);
+        return;
+      }
+
+      if (files.length > openSlots) {
+        toast.error(`Only the first ${openSlots} image${openSlots === 1 ? "" : "s"} were added`);
+      }
+
+      setPreparingFiles(true);
+      try {
+        const prepared: AttachmentUpload[] = [];
+        for (const file of files.slice(0, openSlots)) {
+          try {
+            prepared.push(await prepareImageUpload(file));
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : `Could not add ${file.name}`);
+          }
+        }
+
+        if (prepared.length === 0) return;
+
+        const totalBytes =
+          attachments.reduce((sum, attachment) => sum + attachment.size, 0) +
+          prepared.reduce((sum, attachment) => sum + attachment.size, 0);
+
+        if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+          toast.error("Attached images must total less than 20 MB");
+          return;
+        }
+
+        setAttachments((current) => [...current, ...prepared]);
+        setMenuOpen(false);
+      } finally {
+        setPreparingFiles(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    },
+    [attachments, disabled, preparingFiles, streaming]
+  );
+
+  useEffect(() => {
+    if (disabled || streaming) {
+      setDragActive(false);
+      return;
+    }
+
+    let dragDepth = 0;
+    const containsFiles = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+    const onDragEnter = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault();
+      dragDepth += 1;
+      setDragActive(true);
+    };
+
+    const onDragOver = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      setDragActive(true);
+    };
+
+    const onDragLeave = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0 || event.relatedTarget === null) setDragActive(false);
+    };
+
+    const onDrop = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault();
+      dragDepth = 0;
+      setDragActive(false);
+      void addFiles(Array.from(event.dataTransfer?.files ?? []));
+    };
+
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [addFiles, disabled, streaming]);
+
   const send = () => {
     const t = text.trim();
-    if (!t) return;
+    if ((!t && attachments.length === 0) || preparingFiles) return;
 
     onSend(
       t,
+      attachments,
       forceWebSearch ? "force" : "auto",
       forceThinking ? "force" : "auto"
     );
     setText("");
+    setAttachments([]);
     setForceWebSearch(false);
     setForceThinking(false);
     setMenuOpen(false);
@@ -139,20 +256,82 @@ export default function Composer({
   return (
     <div className="shrink-0">
       <div className="mx-auto max-w-5xl px-6 py-5">
-        <div className="rounded-2xl border border-zinc-800/70 bg-zinc-900/40 backdrop-blur shadow-[0_10px_30px_rgba(0,0,0,0.35)] px-3 py-3">
+        <div
+          className={[
+            "relative rounded-2xl border bg-zinc-900/40 px-3 py-3 backdrop-blur",
+            "shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition",
+            dragActive
+              ? "border-sky-400/60 bg-sky-400/[0.06] ring-2 ring-sky-400/15"
+              : "border-zinc-800/70",
+          ].join(" ")}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={IMAGE_ACCEPT}
+            multiple
+            className="sr-only"
+            onChange={(event) => void addFiles(Array.from(event.target.files ?? []))}
+          />
+
+          {dragActive && (
+            <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center rounded-2xl bg-zinc-950/90 backdrop-blur-sm">
+              <div className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-5 py-3 text-sm font-medium text-sky-100">
+                Drop images to attach
+              </div>
+            </div>
+          )}
+
+          {attachments.length > 0 && (
+            <div
+              className="mb-3 flex gap-2 overflow-x-auto pb-1"
+              aria-label={`${attachments.length} selected image${attachments.length === 1 ? "" : "s"}`}
+            >
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="group relative h-24 w-32 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/30"
+                >
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.name}
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent px-2 pb-1.5 pt-5">
+                    <div className="truncate text-[11px] text-zinc-100">{attachment.name}</div>
+                    <div className="text-[10px] text-zinc-400">{formatFileSize(attachment.size)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAttachments((current) =>
+                        current.filter((candidate) => candidate.id !== attachment.id)
+                      )
+                    }
+                    className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full border border-white/15 bg-black/70 text-sm text-white opacity-90 transition hover:bg-black"
+                    aria-label={`Remove ${attachment.name}`}
+                    title="Remove image"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-end gap-3">
             <div className="relative flex items-end">
               <button
                 ref={plusBtnRef}
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
-                disabled={disabled || streaming}
+                disabled={disabled || streaming || preparingFiles}
                 className={[
                   "mr-1 flex items-center justify-center",
                   "h-10 w-10 rounded-full",
                   "border border-white/10 bg-white/5",
                   "hover:bg-white/10 transition",
-                  disabled || streaming ? "opacity-60 cursor-not-allowed" : "",
+                  disabled || streaming || preparingFiles ? "opacity-60 cursor-not-allowed" : "",
                 ].join(" ")}
                 title="Tools"
                 aria-label="Open tools menu"
@@ -171,6 +350,27 @@ export default function Composer({
                   <div className="px-3 py-2 text-xs text-zinc-400">
                     Tools
                   </div>
+                  <div className="h-px bg-white/10" />
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={preparingFiles || attachments.length >= MAX_IMAGE_COUNT}
+                    className="w-full px-3 py-3 text-left transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base text-zinc-300" aria-hidden="true">▧</span>
+                      <div>
+                        <div className="text-sm text-zinc-100">
+                          {preparingFiles ? "Preparing images…" : "Upload images"}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-zinc-400">
+                          PNG, JPEG, WebP or GIF
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+
                   <div className="h-px bg-white/10" />
 
                   <button
@@ -262,6 +462,24 @@ export default function Composer({
               disabled={disabled || streaming}
               placeholder={streaming ? "Generating…" : "Message XanderGPT…"}
               onChange={(e) => setText(e.target.value)}
+              onPaste={(event) => {
+                const itemFiles = Array.from(event.clipboardData.items)
+                  .filter(
+                    (item) => item.kind === "file" && item.type.startsWith("image/")
+                  )
+                  .map((item) => item.getAsFile())
+                  .filter((file): file is File => file !== null);
+                const imageFiles =
+                  itemFiles.length > 0
+                    ? itemFiles
+                    : Array.from(event.clipboardData.files).filter((file) =>
+                        file.type.startsWith("image/")
+                      );
+
+                if (imageFiles.length === 0) return;
+                event.preventDefault();
+                void addFiles(imageFiles);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -276,7 +494,14 @@ export default function Composer({
                 Stop
               </Button>
             ) : (
-              <Button onClick={send} disabled={disabled || !text.trim()}>
+              <Button
+                onClick={send}
+                disabled={
+                  disabled ||
+                  preparingFiles ||
+                  (!text.trim() && attachments.length === 0)
+                }
+              >
                 Send
               </Button>
             )}

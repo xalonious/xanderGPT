@@ -60,8 +60,9 @@ router.post(
     };
 
     req.on("aborted", markGoneAndAbort);
-    req.on("close", markGoneAndAbort);
-    res.on("close", markGoneAndAbort);
+    res.on("close", () => {
+      if (!res.writableEnded) markGoneAndAbort();
+    });
 
     const safeWriteLine = (obj: unknown) => {
       if (clientGone || res.writableEnded) return;
@@ -92,6 +93,7 @@ router.post(
             }),
           webSearchMode,
           thinkingMode,
+          attachments: req.body.attachments ?? [],
           onToolEvent: (evt) => safeWriteLine(evt),
           signal: ac.signal,
         }
@@ -169,6 +171,29 @@ router.get(
   })
 );
 
+router.get(
+  "/:id/attachments/:attachmentId",
+  asyncHandler(async (req, res) => {
+    const conversationId = req.params.id as string;
+    const attachmentId = req.params.attachmentId as string;
+    const attachment = await convoService.getMessageAttachment(
+      req.user!.id,
+      conversationId,
+      attachmentId
+    );
+
+    res.setHeader("Content-Type", attachment.mimeType);
+    res.setHeader("Content-Length", String(attachment.size));
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(attachment.name)}`
+    );
+    res.send(Buffer.from(attachment.data));
+  })
+);
+
 router.post(
   "/:id/messages",
   validateRequest(sendMessageSchema),
@@ -177,7 +202,8 @@ router.post(
     const message = await convoService.sendMessageNonStream(
       req.user!.id,
       conversationId,
-      req.body.content
+      req.body.content,
+      req.body.attachments ?? []
     );
     res.status(201).json({ message });
   })
@@ -206,8 +232,9 @@ router.post(
     };
 
     req.on("aborted", markGoneAndAbort);
-    req.on("close", markGoneAndAbort);
-    res.on("close", markGoneAndAbort);
+    res.on("close", () => {
+      if (!res.writableEnded) markGoneAndAbort();
+    });
 
     const safeWriteLine = (obj: unknown) => {
       if (clientGone || res.writableEnded) return;
@@ -236,6 +263,7 @@ router.post(
             }),
           webSearchMode,
           thinkingMode,
+          attachments: req.body.attachments ?? [],
           onToolEvent: (evt) => safeWriteLine(evt),
           signal: ac.signal,
         }

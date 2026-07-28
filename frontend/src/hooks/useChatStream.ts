@@ -1,8 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { sendMessageStream, sendTemporaryMessageStream } from "../api/stream";
 import * as convoApi from "../api/conversations";
+import {
+  toAttachmentPayload,
+  type AttachmentUpload,
+} from "../attachments";
 
-type LocalStatus = "normal" | "cancelled";
+type LocalStatus = "normal" | "cancelled" | "failed";
 
 type LocalMessage = Omit<
   convoApi.MessageDTO,
@@ -111,6 +115,7 @@ export function useChatStream(opts: {
   const send = useCallback(
     async (
       content: string,
+      attachments: AttachmentUpload[] = [],
       conversationIdOverride?: string,
       webSearch: WebSearchMode = "auto",
       thinking: ThinkingMode = "auto"
@@ -143,6 +148,15 @@ export function useChatStream(opts: {
         content,
         thinking: null,
         thinkingDurationMs: null,
+        attachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          data: attachment.data,
+          previewUrl: attachment.previewUrl,
+        })),
         createdAt: new Date().toISOString(),
         local: true,
         status: "normal",
@@ -153,7 +167,10 @@ export function useChatStream(opts: {
         id: assistantId,
         conversationId: activeId,
         role: "assistant",
-        content: "",
+        content:
+          attachments.length === 0
+            ? ""
+            : `__PROCESSING_IMAGES__:${attachments.length}`,
         thinking: null,
         thinkingDurationMs: null,
         createdAt: new Date().toISOString(),
@@ -168,6 +185,7 @@ export function useChatStream(opts: {
         await sendMessageStream({
           conversationId: activeId,
           content,
+          attachments: attachments.map(toAttachmentPayload),
           webSearch,
           thinking,
           signal: ctrl.signal,
@@ -281,6 +299,17 @@ export function useChatStream(opts: {
           });
           return;
         }
+        finishThinking(assistantId);
+        onAssistantReplace({
+          ...assistantMsg,
+          content:
+            err instanceof Error
+              ? err.message
+              : "The local model could not generate a response.",
+          thinking: lastThinkingRef.current || null,
+          thinkingDurationMs: lastThinkingDurationMsRef.current,
+          status: "failed",
+        });
         throw err;
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
@@ -303,7 +332,12 @@ export function useChatStream(opts: {
   const sendTemporary = useCallback(
     async (
       content: string,
-      history: Array<{ role: "user" | "assistant"; content: string }>,
+      attachments: AttachmentUpload[] = [],
+      history: Array<{
+        role: "user" | "assistant";
+        content: string;
+        attachments?: convoApi.AttachmentPayload[];
+      }>,
       systemPrompt: string,
       webSearch: WebSearchMode = "auto",
       thinking: ThinkingMode = "auto"
@@ -347,6 +381,15 @@ export function useChatStream(opts: {
         content,
         thinking: null,
         thinkingDurationMs: null,
+        attachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          data: attachment.data,
+          previewUrl: attachment.previewUrl,
+        })),
         createdAt: new Date().toISOString(),
         local: true,
         status: "normal",
@@ -357,7 +400,10 @@ export function useChatStream(opts: {
         id: assistantId,
         conversationId: activeId,
         role: "assistant",
-        content: "",
+        content:
+          attachments.length === 0
+            ? ""
+            : `__PROCESSING_IMAGES__:${attachments.length}`,
         thinking: null,
         thinkingDurationMs: null,
         createdAt: new Date().toISOString(),
@@ -371,6 +417,7 @@ export function useChatStream(opts: {
       try {
         await sendTemporaryMessageStream({
           content,
+          attachments: attachments.map(toAttachmentPayload),
           history: uncompactedHistory,
           systemPrompt,
           contextSummary: temporaryContextSummaryRef.current,
@@ -495,6 +542,17 @@ export function useChatStream(opts: {
           });
           return;
         }
+        finishThinking(assistantId);
+        onAssistantReplace({
+          ...assistantMsg,
+          content:
+            err instanceof Error
+              ? err.message
+              : "The local model could not generate a response.",
+          thinking: lastThinkingRef.current || null,
+          thinkingDurationMs: lastThinkingDurationMsRef.current,
+          status: "failed",
+        });
         throw err;
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;

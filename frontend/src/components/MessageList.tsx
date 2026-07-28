@@ -119,6 +119,24 @@ export default function MessageList({
     <div ref={scrollerRef} className="flex-1 min-h-0 overflow-y-auto px-6 py-8">
       <div className="mx-auto max-w-5xl space-y-4">
         {rendered.map((m) => {
+          const processingImagesMatch =
+            m.role === "assistant"
+              ? /^__PROCESSING_IMAGES__:(\d+)$/.exec(m.content)
+              : null;
+
+          if (processingImagesMatch) {
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-zinc-100">
+                  <TypingIndicator
+                    mode="processing-image"
+                    imageCount={Number(processingImagesMatch[1])}
+                  />
+                </div>
+              </div>
+            );
+          }
+
           if (m.role === "assistant" && m.content === "__TYPING__") {
             return (
               <div key={m.id} className="flex justify-start">

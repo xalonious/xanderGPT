@@ -74,7 +74,13 @@ export default function ChatPage() {
     [location.search]
   );
 
-  const { create, conversations, updateTitleLocal, setSystemPrompt } = useConversations();
+  const {
+    create,
+    conversations,
+    loading: conversationsLoading,
+    updateTitleLocal,
+    setSystemPrompt,
+  } = useConversations();
   const { messages, setMessages, loading } = useMessages(convoId);
 
   const [error, setError] = useState<string | null>(null);
@@ -90,14 +96,9 @@ export default function ChatPage() {
     }
   });
 
-  const conversationsLoadedOnceRef = useRef(false);
-  useEffect(() => {
-    conversationsLoadedOnceRef.current = true;
-  }, [conversations]);
-
   useEffect(() => {
     if (!convoId) return;
-    if (!conversationsLoadedOnceRef.current) return;
+    if (conversationsLoading) return;
     if (temporaryChat) return;
 
     const exists = conversations.some((c) => c.id === convoId);
@@ -105,7 +106,7 @@ export default function ChatPage() {
       setMessages([]);
       navigate("/c/new", { replace: true });
     }
-  }, [convoId, conversations, navigate, setMessages, temporaryChat]);
+  }, [convoId, conversations, conversationsLoading, navigate, setMessages, temporaryChat]);
 
   const currentTitle = useMemo(() => {
     if (temporaryChat) return "Temporary chat";
@@ -357,7 +358,7 @@ export default function ChatPage() {
 
       let actualId = convoId;
 
-      if (actualId && conversationsLoadedOnceRef.current) {
+      if (actualId && !conversationsLoading) {
         const exists = conversations.some((c) => c.id === actualId);
         if (!exists) actualId = null;
       }

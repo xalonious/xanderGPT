@@ -22,7 +22,7 @@ Brave Search API.
 The desktop chat interface with persistent conversations, Markdown rendering,
 syntax-highlighted code, and streaming responses.
 
-![xanderGPT chat interface](readme_images/chat.png)
+![xanderGPT chat interface](preview/chat.png)
 
 ## Features
 

@@ -17,6 +17,13 @@ as NDJSON. Before answering, it can automatically decide whether to evaluate a
 calculation, read a URL included in the prompt, or search the web through the
 Brave Search API.
 
+## Preview
+
+The desktop chat interface with persistent conversations, Markdown rendering,
+syntax-highlighted code, and streaming responses.
+
+![xanderGPT chat interface](readme_images/chat.png)
+
 ## Features
 
 - Local inference through Ollama
